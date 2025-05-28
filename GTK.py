@@ -68,7 +68,7 @@ class FruitBanner(Gtk.Window):
         self.current_target = side
         return False
 
-    def smooth_move_to(self, target_x, target_y, duration_ms=300):
+    def smooth_move_to(self, target_x, target_y, side, duration_ms=300):
         if self.is_moving:
             return
         self.is_moving = True
@@ -83,6 +83,7 @@ class FruitBanner(Gtk.Window):
             if step > steps:
                 self.move(target_x, target_y)
                 self.is_moving = False
+                self.current_target = side  # ✅ 현재 위치 갱신
                 return False
             new_x = int(start_x + dx * step / steps)
             new_y = int(start_y + dy * step / steps)
@@ -115,7 +116,6 @@ class FruitBanner(Gtk.Window):
             color: black;
             font-size: 18pt;
             padding: 6px 12px;
-            border-radius: 8px;
         }}
         """
         self.label.set_text("")
@@ -129,7 +129,6 @@ class FruitBanner(Gtk.Window):
                 color: black;
                 font-size: 18pt;
                 padding: 6px 12px;
-                border-radius: 8px;
                 transition: all 300ms ease;
             }}
             """
@@ -177,7 +176,7 @@ class FruitBanner(Gtk.Window):
         if near:
             new_target = 'right' if self.current_target == 'left' else 'left'
             x, y = self.get_target_position(new_target)
-            self.smooth_move_to(x, y)
+            self.smooth_move_to(x, y, side=new_target)
 
         return True
 
