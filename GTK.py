@@ -5,30 +5,29 @@ from gi.repository import Gtk, Gdk, GLib
 import random
 
 WORDS = ["🍎 Apple", "🍊 Orange", "🍌 Banana", "🍇 Grape", "🍉 Watermelon"]
+CORNER_POSITIONS = ["top-left", "top-right", "bottom-left", "bottom-right"]
 
 class TextChanger(Gtk.Window):
     def __init__(self):
         super().__init__(title="Updater")
 
-        # 창 옵션
-        self.set_decorated(False)                # 창 테두리 제거
-        self.set_keep_above(True)                # 항상 위
-        self.set_skip_taskbar_hint(True)         # 작업표시줄 숨김
+        self.set_decorated(False)
+        self.set_keep_above(True)
+        self.set_skip_taskbar_hint(True)
+        self.set_skip_pager_hint(True)
         self.set_resizable(False)
         self.set_accept_focus(False)
-
-        # 투명도 설정
         self.set_app_paintable(True)
+
         screen = self.get_screen()
         visual = screen.get_rgba_visual()
         if visual and self.is_composited():
             self.set_visual(visual)
 
-        # 스타일: 배경 반투명 흰색, 글자는 진한 회색
         css = b"""
         * {
-            background-color: rgba(255, 255, 255, 0.5);
-            color: #222;
+            background-color: #ffffff;
+            color: #444;
             font-size: 16pt;
             padding: 4px;
         }
@@ -41,41 +40,65 @@ class TextChanger(Gtk.Window):
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
 
-        # 텍스트 라벨 추가
         self.label = Gtk.Label(label="")
         self.add(self.label)
-
         self.set_default_size(150, 30)
-        self.set_position(Gtk.WindowPosition.MOUSE)  # 초기 위치 설정용
-
         self.update_text()
-        GLib.timeout_add_seconds(1800, self.update_text)  # 30분마다 실행
 
-        # 창이 뜬 후 위치를 우상단으로 이동
-        GLib.idle_add(self.move_to_top_right)
+        self.current_corner = "top-right"
+        GLib.idle_add(self.move_to_corner)
 
-        # 마우스 이동 방지용: 버튼 이벤트 캡처
-        self.connect("button-press-event", self.disable_mouse_drag)
-        self.connect("motion-notify-event", self.disable_mouse_drag)
-        self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.POINTER_MOTION_MASK)
+        # 30분마다 텍스트 갱신
+        GLib.timeout_add_seconds(1800, self.update_text)
+
+        # 마우스 감지 반복 (0.2초 간격)
+        GLib.timeout_add(200, self.check_mouse_near)
 
     def update_text(self):
         new_text = random.choice(WORDS)
         self.label.set_text(new_text)
-        print(f"Updated: {new_text}")
         return True
 
-    def move_to_top_right(self):
+    def move_to_corner(self):
         screen = self.get_screen()
         monitor = screen.get_monitor_geometry(screen.get_primary_monitor())
-        window_width, window_height = self.get_size()
+        w, h = self.get_size()
         margin = 10
-        x = monitor.x + monitor.width - window_width - margin
-        y = monitor.y + margin
-        self.move(x, y)
 
-    def disable_mouse_drag(self, widget, event):
-        return True  # 이벤트 무시
+        corners = {
+            "top-left": (monitor.x + margin, monitor.y + margin),
+            "top-right": (monitor.x + monitor.width - w - margin, monitor.y + margin),
+            "bottom-left": (monitor.x + margin, monitor.y + monitor.height - h - margin),
+            "bottom-right": (monitor.x + monitor.width - w - margin, monitor.y + monitor.height - h - margin),
+        }
+
+        x, y = corners[self.current_corner]
+        self.move(x, y)
+        return False
+
+    def check_mouse_near(self):
+        display = Gdk.Display.get_default()
+        seat = display.get_default_seat()
+        pointer = seat.get_pointer()
+        screen, mx, my = pointer.get_position()
+
+        win_x, win_y = self.get_position()
+        win_w, win_h = self.get_size()
+
+        margin = 50  # 마우스가 이 거리보다 가까우면 튐
+
+        near = (
+            win_x - margin < mx < win_x + win_w + margin and
+            win_y - margin < my < win_y + win_h + margin
+        )
+
+        if near:
+            # 다음 코너로 튀기
+            available = [c for c in CORNER_POSITIONS if c != self.current_corner]
+            self.current_corner = random.choice(available)
+            self.move_to_corner()
+
+        return True  # 반복 계속
 
 win = TextChanger()
 win.connect("destroy", Gtk.main_quit)
