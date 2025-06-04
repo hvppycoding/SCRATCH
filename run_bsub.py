@@ -2,16 +2,23 @@
 import subprocess
 import os
 
-def get_input(prompt, default, cast_func=str, allow_zero=False):
+MAX_CORES = 32        # Maximum number of cores
+MAX_MEM_GB = 64       # Maximum memory per core in GB
+
+def get_input(prompt, default, cast_func=str, allow_zero=False, max_value=None):
     while True:
         val = input(f"{prompt} [{default}]: ").strip()
         if not val:
             return default
         try:
             value = cast_func(val)
-            if not allow_zero and cast_func == int and value <= 0:
-                print("Please enter a positive number or press Enter to use the default.")
-                continue
+            if cast_func == int:
+                if not allow_zero and value <= 0:
+                    print("Please enter a positive number or press Enter to use the default.")
+                    continue
+                if max_value is not None and value > max_value:
+                    print(f"Maximum allowed value is {max_value}.")
+                    continue
             return value
         except ValueError:
             print("Invalid input. Please try again.")
@@ -19,8 +26,8 @@ def get_input(prompt, default, cast_func=str, allow_zero=False):
 def main():
     print("=== bsub submission helper ===")
 
-    num_cores = get_input("Number of cores", 1, int)
-    mem_gb = get_input("Memory per core (GB)", 8, int)
+    num_cores = get_input("Number of cores", 1, int, max_value=MAX_CORES)
+    mem_gb = get_input("Memory per core (GB)", 8, int, max_value=MAX_MEM_GB)
     timeout_hours = get_input("Timeout (hours, 0 for unlimited)", 8, int, allow_zero=True)
     command = input("Command to run [xterm]: ").strip() or "xterm"
 
