@@ -5,8 +5,8 @@ module not_gate(output Y, input A);
   supply1 vdd;
   supply0 gnd;
 
-  pmos p1(Y, vdd, A);    // P-type: A=0 -> pull up
-  nmos n1(Y, gnd, A);    // N-type: A=1 -> pull down
+  pmos p1(Y, vdd, A);    // A=0 → Y=vdd
+  nmos n1(Y, gnd, A);    // A=1 → Y=gnd
 endmodule
 
 // NAND gate: CMOS implementation (2-input)
@@ -32,6 +32,28 @@ module and_gate(output Y, input A, B);
   not_gate not1(Y, nand_out);
 endmodule
 
+// NOR gate: CMOS implementation
+module nor_gate(output Y, input A, B);
+  supply1 vdd;
+  supply0 gnd;
+  wire p_mid;
+
+  // Pull-up (pMOS in series)
+  pmos p1(p_mid, vdd, A);
+  pmos p2(Y, p_mid, B);
+
+  // Pull-down (nMOS in parallel)
+  nmos n1(Y, gnd, A);
+  nmos n2(Y, gnd, B);
+endmodule
+
+// OR gate = NOR followed by NOT
+module or_gate(output Y, input A, B);
+  wire nor_out;
+  nor_gate nor1(nor_out, A, B);
+  not_gate not1(Y, nor_out);
+endmodule
+
 // XOR gate: CMOS-based from basic gates
 module xor_gate(output Y, input A, B);
   wire na, nb, a1, a2;
@@ -41,15 +63,6 @@ module xor_gate(output Y, input A, B);
   and_gate a_and1(a1, A, nb);
   and_gate a_and2(a2, na, B);
   or_gate  o1(Y, a1, a2);
-endmodule
-
-// OR gate: CMOS implementation using DeMorgan = ~(~A & ~B)
-module or_gate(output Y, input A, B);
-  wire na, nb, nand_out;
-  not_gate n1(na, A);
-  not_gate n2(nb, B);
-  nand_gate nand1(nand_out, na, nb);
-  not_gate not1(Y, nand_out);
 endmodule
 
 // 1-bit Full Adder
