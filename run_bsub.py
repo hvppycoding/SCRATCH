@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import subprocess
+import os
 
 def get_input(prompt, default, cast_func=str, allow_zero=False):
     while True:
@@ -19,14 +20,14 @@ def main():
     print("=== bsub 실행 도우미 ===")
 
     num_cores = get_input("사용할 코어 수", 1, int)
-    mem_gb = get_input("요청 메모리 (GB)", 8, int)
+    mem_gb = get_input("요청 메모리 (코어당 GB)", 8, int)
     timeout_hours = get_input("제한 시간 (시간, 0이면 무제한)", 8, int, allow_zero=True)
     command = input("실행할 커맨드 [xterm]: ").strip() or "xterm"
 
-    mem_str = f"{mem_gb}GB"
+    cwd = os.getcwd()
     time_str = "" if timeout_hours == 0 else f"-W {timeout_hours}:00"
 
-    bsub_cmd = f"bsub -n {num_cores} -R 'rusage[mem={mem_gb*1024}]' {time_str} {command}"
+    bsub_cmd = f"bsub -cwd {cwd} -n {num_cores} -R 'rusage[mem={mem_gb*1024}]' {time_str} {command}"
     print(f"\n실행할 bsub 명령어:\n{bsub_cmd}")
 
     confirm = input("\n실행할까요? [Y/n]: ").strip().lower()
