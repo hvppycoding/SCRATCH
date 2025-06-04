@@ -84,7 +84,3 @@ module substractor(output [3:0] s1, input [3:0] a, b);
 
   assign s1 = sum;
 endmodule
-
-
-CMOS 기반으로 구성된
-
