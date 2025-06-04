@@ -4,34 +4,38 @@ from pyverilog.vparser.ast import InstanceList, Instance
 from pyverilog.ast_code_generator.codegen import ASTCodeGenerator
 
 
-from pyverilog.vparser.ast import InstanceList, Instance
-
 def replace_module_instance(ast, replace_dict):
     changed = False
     for desc in ast.description.definitions:
         new_items = []
         for item in desc.items:
             if isinstance(item, InstanceList):
-                new_instances = []
-                for inst in item.instances:
-                    if isinstance(inst, Instance):
-                        if inst.module in replace_dict:
-                            old = inst.module
-                            new = replace_dict[old]
-                            print(f"Replacing instance '{inst.name}': {old} → {new}")
-                            new_inst = Instance(
-                                name=inst.name,
-                                module=new,
-                                portlist=inst.portlist,
-                                parameterlist=inst.parameterlist
-                            )
-                            new_instances.append(new_inst)
-                            changed = True
-                        else:
-                            new_instances.append(inst)
-                    else:
-                        new_instances.append(inst)
-                new_items.append(InstanceList(item.module, item.parameterlist, new_instances))
+                old_module_name = item.module
+                new_module_name = replace_dict.get(old_module_name, old_module_name)
+
+                if old_module_name != new_module_name:
+                    print(f"Replacing module: {old_module_name} → {new_module_name}")
+                    changed = True
+
+                    # 인스턴스 내부도 같이 바꿔주기
+                    new_instances = []
+                    for inst in item.instances:
+                        new_inst = Instance(
+                            name=inst.name,
+                            module=new_module_name,  # ✅ 같이 바꿔줌
+                            portlist=inst.portlist,
+                            parameterlist=inst.parameterlist
+                        )
+                        new_instances.append(new_inst)
+
+                    new_item = InstanceList(
+                        module=new_module_name,
+                        parameterlist=item.parameterlist,
+                        instances=new_instances
+                    )
+                    new_items.append(new_item)
+                else:
+                    new_items.append(item)
             else:
                 new_items.append(item)
         desc.items = new_items
