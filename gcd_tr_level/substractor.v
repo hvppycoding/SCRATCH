@@ -64,23 +64,25 @@ module full_adder(output Sum, output Cout, input A, B, Cin);
   or_gate  o1(Cout, c1, c2);
 endmodule
 
-// 4-bit Subtractor (a - b = a + (~b + 1))
-module substractor(output [3:0] s1, input [3:0] a, b);
-  wire [3:0] b_inv;
-  wire [3:0] sum;
-  wire [3:0] c;
+// 32-bit Subtractor (a - b = a + (~b + 1))
+module substractor(output [31:0] s1, input [31:0] a, b);
+  wire [31:0] b_inv;
+  wire [31:0] sum;
+  wire [31:0] c;
 
   genvar i;
   generate
-    for (i = 0; i < 4; i = i + 1) begin
+    for (i = 0; i < 32; i = i + 1) begin
       not_gate inv(b_inv[i], b[i]);
     end
   endgenerate
 
   full_adder fa0(sum[0], c[0], a[0], b_inv[0], 1'b1);
-  full_adder fa1(sum[1], c[1], a[1], b_inv[1], c[0]);
-  full_adder fa2(sum[2], c[2], a[2], b_inv[2], c[1]);
-  full_adder fa3(sum[3], c[3], a[3], b_inv[3], c[2]);
+  generate
+    for (i = 1; i < 32; i = i + 1) begin : adder_loop
+      full_adder fa(sum[i], c[i], a[i], b_inv[i], c[i-1]);
+    end
+  endgenerate
 
   assign s1 = sum;
 endmodule
