@@ -17,7 +17,7 @@ module nand_gate(output Y, input A, B);
   wire n_mid;
 
   // Pull-up network (parallel pMOS)
-  pmos p1(Y, vdd, A);
+  pmos p1(Y, vdd, A);ㅐ
   pmos p2(Y, vdd, B);
 
   // Pull-down network (series nMOS)
