@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Wrap Clipboard HTML in &lt;code&gt;</title>
+</head>
+<body>
+  <button onclick="wrapClipboardHtml()">📋 Wrap clipboard HTML with &lt;code&gt;</button>
+  <p style="font-size: 0.9em; color: gray;">이 브라우저 탭이 포커스되어 있어야 합니다.</p>
+
+  <script>
+    async function wrapClipboardHtml() {
+      if (!navigator.clipboard.read) {
+        alert("이 브라우저는 clipboard.read()를 지원하지 않습니다.");
+        return;
+      }
+      if (!document.hasFocus()) {
+        alert("브라우저 탭에 포커스를 먼저 주세요.");
+        return;
+      }
+
+      try {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          if (item.types.includes("text/html")) {
+            const blob = await item.getType("text/html");
+            const html = await blob.text();
+
+            const wrapped = `<code>${html}</code>`;
+
+            await navigator.clipboard.write([
+              new ClipboardItem({
+                "text/html": new Blob([wrapped], { type: "text/html" }),
+                "text/plain": new Blob([html], { type: "text/plain" })
+              })
+            ]);
+
+            alert("클립보드 HTML이 <code>로 감싸졌습니다.");
+            return;
+          }
+        }
+        alert("클립보드에 HTML 형식 데이터가 없습니다.");
+      } catch (err) {
+        console.error(err);
+        alert("클립보드 접근 중 오류 발생: " + err.message);
+      }
+    }
+  </script>
+</body>
+</html>
