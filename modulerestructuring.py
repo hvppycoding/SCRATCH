@@ -29,14 +29,25 @@ def build_module_port_directions(ast):
     return port_directions
 
 # Determine port directions based on instance port connections and module declarations
+# Handles both named and positional port connections
 def determine_port_direction(instances, port_directions):
     net_dir_map = defaultdict(set)
 
     for inst in instances:
         module_name = inst.module
-        for conn in inst.instances[0].portlist:
+        module_ports = list(port_directions[module_name].items())
+        for conn_index, conn in enumerate(inst.instances[0].portlist):
             net = conn.argname.name
-            port = conn.portname
+            # Handle named connections
+            if conn.portname is not None:
+                port = conn.portname
+            else:
+                # Positional connection: get port name by order
+                if conn_index < len(module_ports):
+                    port = module_ports[conn_index][0]
+                else:
+                    continue  # Skip if unmatched
+
             direction = port_directions[module_name].get(port, None)
             if direction:
                 net_dir_map[net].add(direction)
