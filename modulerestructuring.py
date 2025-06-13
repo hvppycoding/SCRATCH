@@ -36,12 +36,14 @@ def build_module_port_directions(ast):
 # Handles both named and positional port connections
 def determine_port_direction(instances, port_directions):
     net_dir_map = defaultdict(set)
+    net_instance_usage = defaultdict(int)
 
     for inst in instances:
         module_name = inst.module
         module_ports = list(port_directions[module_name].items())
         for conn_index, conn in enumerate(inst.instances[0].portlist):
             net = conn.argname.name
+            net_instance_usage[net] += 1
             if conn.portname is not None:
                 port = conn.portname
             else:
@@ -63,7 +65,22 @@ def determine_port_direction(instances, port_directions):
         else:
             final_ports[net] = 'input'
 
-    return final_ports
+    return final_ports, net_instance_usage
+
+# Remove internal-only nets from port list by checking usage outside selected instances
+def filter_internal_nets(ports, usage_map, ast, top_module_name, selected_instances):
+    external_nets = set()
+    for module in ast.description.definitions:
+        if module.name != top_module_name:
+            continue
+        for item in module.items:
+            if item not in selected_instances and hasattr(item, 'instances'):
+                for inst in item.instances:
+                    for conn in inst.portlist:
+                        if hasattr(conn.argname, 'name'):
+                            external_nets.add(conn.argname.name)
+    # Only keep nets used elsewhere
+    return {net: direction for net, direction in ports.items() if net in external_nets}
 
 # Create a new Verilog module by grouping instances and determining nets as ports
 def create_new_module(module_name, instances, ports):
@@ -101,12 +118,13 @@ if __name__ == "__main__":
     ast, _ = parse([args.verilog])
     instances = extract_instances(ast, args.top_module, instance_names)
     module_port_directions = build_module_port_directions(ast)
-    ports = determine_port_direction(instances, module_port_directions)
+    ports, usage_map = determine_port_direction(instances, module_port_directions)
+    filtered_ports = filter_internal_nets(ports, usage_map, ast, args.top_module, instances)
 
     new_module_name = "new_module"
-    new_module_code = create_new_module(new_module_name, instances, ports)
+    new_module_code = create_new_module(new_module_name, instances, filtered_ports)
 
-    modify_top_module(ast, args.top_module, new_module_name, ports)
+    modify_top_module(ast, args.top_module, new_module_name, filtered_ports)
 
     generator = ASTCodeGenerator()
     modified_top_code = generator.visit(ast)
