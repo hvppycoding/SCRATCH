@@ -1,6 +1,7 @@
 import argparse
 from pyverilog.vparser.parser import parse
 from pyverilog.ast_code_generator.codegen import ASTCodeGenerator
+from pyverilog.vparser.ast import Input, Output, Inout
 from collections import defaultdict
 
 # Extract specified instances from a given module and remove them from the original module
@@ -17,15 +18,17 @@ def extract_instances(ast, module_name, instance_names):
             module.items = new_items
     return instances
 
-# Build a lookup table for all module port directions
+# Build a lookup table for all module port directions (from internal input/output declarations)
 def build_module_port_directions(ast):
     port_directions = defaultdict(dict)
     for module in ast.description.definitions:
-        if hasattr(module, 'portlist') and module.portlist:
-            for port in module.portlist.ports:
-                if hasattr(port, 'first') and port.first:
-                    direction = port.first.__class__.__name__.lower()  # 'input', 'output', 'inout'
-                    port_directions[module.name][port.name] = direction
+        if not hasattr(module, 'items'):
+            continue
+        for item in module.items:
+            if isinstance(item, (Input, Output, Inout)):
+                direction = item.__class__.__name__.lower()
+                for name in item.names:
+                    port_directions[module.name][name] = direction
     return port_directions
 
 # Determine port directions based on instance port connections and module declarations
@@ -38,15 +41,13 @@ def determine_port_direction(instances, port_directions):
         module_ports = list(port_directions[module_name].items())
         for conn_index, conn in enumerate(inst.instances[0].portlist):
             net = conn.argname.name
-            # Handle named connections
             if conn.portname is not None:
                 port = conn.portname
             else:
-                # Positional connection: get port name by order
                 if conn_index < len(module_ports):
                     port = module_ports[conn_index][0]
                 else:
-                    continue  # Skip if unmatched
+                    continue
 
             direction = port_directions[module_name].get(port, None)
             if direction:
@@ -54,7 +55,6 @@ def determine_port_direction(instances, port_directions):
 
     final_ports = {}
     for net, directions in net_dir_map.items():
-        # Prefer 'output' if present, otherwise 'input', then 'inout'
         if 'output' in directions:
             final_ports[net] = 'output'
         elif 'inout' in directions:
