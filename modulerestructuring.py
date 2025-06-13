@@ -1,4 +1,4 @@
-.from pyverilog.vparser.parser import parse
+from pyverilog.vparser.parser import parse
 from pyverilog.ast_code_generator.codegen import ASTCodeGenerator
 import sys
 
