@@ -1,8 +1,9 @@
 import argparse
 from pyverilog.vparser.parser import parse
 from pyverilog.ast_code_generator.codegen import ASTCodeGenerator
+from collections import defaultdict
 
-
+# Extract specified instances from a given module and remove them from the original module
 def extract_instances(ast, module_name, instance_names):
     instances = []
     for module in ast.description.definitions:
@@ -16,14 +17,45 @@ def extract_instances(ast, module_name, instance_names):
             module.items = new_items
     return instances
 
+# Build a lookup table for all module port directions
+def build_module_port_directions(ast):
+    port_directions = defaultdict(dict)
+    for module in ast.description.definitions:
+        if hasattr(module, 'portlist') and module.portlist:
+            for port in module.portlist.ports:
+                if hasattr(port, 'first') and port.first:
+                    direction = port.first.__class__.__name__.lower()  # 'input', 'output', 'inout'
+                    port_directions[module.name][port.name] = direction
+    return port_directions
 
-def create_new_module(module_name, instances):
-    ports = set()
+# Determine port directions based on instance port connections and module declarations
+def determine_port_direction(instances, port_directions):
+    net_dir_map = defaultdict(set)
+
     for inst in instances:
+        module_name = inst.module
         for conn in inst.instances[0].portlist:
-            ports.add(conn.argname)
+            net = conn.argname.name
+            port = conn.portname
+            direction = port_directions[module_name].get(port, None)
+            if direction:
+                net_dir_map[net].add(direction)
 
-    port_list = ', '.join(ports)
+    final_ports = {}
+    for net, directions in net_dir_map.items():
+        # Prefer 'output' if present, otherwise 'input', then 'inout'
+        if 'output' in directions:
+            final_ports[net] = 'output'
+        elif 'inout' in directions:
+            final_ports[net] = 'inout'
+        else:
+            final_ports[net] = 'input'
+
+    return final_ports
+
+# Create a new Verilog module by grouping instances and determining nets as ports
+def create_new_module(module_name, instances, ports):
+    port_list = ', '.join(f'{ports[p]} {p}' for p in ports)
     module_code = f"module {module_name}({port_list});\n"
 
     for inst in instances:
@@ -33,13 +65,14 @@ def create_new_module(module_name, instances):
     module_code += "endmodule\n"
     return module_code
 
-
+# Modify the original top-level module to instantiate the newly created module
 def modify_top_module(ast, top_module_name, new_module_name, ports):
     for module in ast.description.definitions:
         if module.name == top_module_name:
             port_map = ', '.join(f".{p}({p})" for p in ports)
-            instantiation = f"{new_module_name} u_{new_module_name}({port_map});"
-            module.items.append(parse(instantiation).description.definitions[0].items[0])
+            instantiation = f"module dummy; {new_module_name} u_{new_module_name}({port_map}); endmodule"
+            inst_ast, _ = parse([instantiation])
+            module.items.append(inst_ast.description.definitions[0].items[0])
 
 
 if __name__ == "__main__":
@@ -55,10 +88,11 @@ if __name__ == "__main__":
 
     ast, _ = parse([args.verilog])
     instances = extract_instances(ast, args.top_module, instance_names)
-    ports = {conn.argname for inst in instances for conn in inst.instances[0].portlist}
+    module_port_directions = build_module_port_directions(ast)
+    ports = determine_port_direction(instances, module_port_directions)
 
     new_module_name = "new_module"
-    new_module_code = create_new_module(new_module_name, instances)
+    new_module_code = create_new_module(new_module_name, instances, ports)
 
     modify_top_module(ast, args.top_module, new_module_name, ports)
 
