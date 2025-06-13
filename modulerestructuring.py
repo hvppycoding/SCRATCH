@@ -1,7 +1,7 @@
 import argparse
 from pyverilog.vparser.parser import parse
 from pyverilog.ast_code_generator.codegen import ASTCodeGenerator
-from pyverilog.vparser.ast import Input, Output, Inout
+from pyverilog.vparser.ast import Decl, Input, Output, Inout
 from collections import defaultdict
 
 # Extract specified instances from a given module and remove them from the original module
@@ -18,17 +18,18 @@ def extract_instances(ast, module_name, instance_names):
             module.items = new_items
     return instances
 
-# Build a lookup table for all module port directions (from internal input/output declarations)
+# Build a lookup table for all module port directions (from Decl list containing Input/Output/Inout)
 def build_module_port_directions(ast):
     port_directions = defaultdict(dict)
     for module in ast.description.definitions:
         if not hasattr(module, 'items'):
             continue
         for item in module.items:
-            if isinstance(item, (Input, Output, Inout)):
-                direction = item.__class__.__name__.lower()
-                for name in item.names:
-                    port_directions[module.name][name] = direction
+            if isinstance(item, Decl):
+                for decl in item.list:
+                    if isinstance(decl, (Input, Output, Inout)):
+                        direction = decl.__class__.__name__.lower()
+                        port_directions[module.name][decl.name] = direction
     return port_directions
 
 # Determine port directions based on instance port connections and module declarations
