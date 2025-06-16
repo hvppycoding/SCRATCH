@@ -34,70 +34,79 @@ def recursive_tranif_count(module_name):
                     child_tcount = recursive_tranif_count(inst.module)
                     tcount['tranif0'] += child_tcount['tranif0']
                     tcount['tranif1'] += child_tcount['tranif1']
-                # primitive는 tranif 아닌 경우 무시
     tranif_cache[module_name] = tcount
     return tcount
 
-def traverse_for_depth(module_name, path, depth):
-    tcount = recursive_tranif_count(module_name)
-    global max_depth, max_depth_path
-    if tcount['tranif0'] > 0 or tcount['tranif1'] > 0:
-        if depth > max_depth:
-            max_depth = depth
-            max_depth_path = ' > '.join(path)
-
+def traverse_and_collect(module_name, path_prefix, rows):
     module = module_defs[module_name]
     for item in module.items:
         if isinstance(item, InstanceList):
             for inst in item.instances:
                 if inst.module in module_defs:
-                    traverse_for_depth(inst.module, path + [inst.name], depth + 1)
+                    tcount = recursive_tranif_count(inst.module)
+                    rows.append({
+                        'InstancePath': path_prefix + inst.name,
+                        'ModuleName': inst.module,
+                        'tranif0_count': tcount['tranif0'],
+                        'tranif1_count': tcount['tranif1']
+                    })
+                    traverse_and_collect(inst.module, path_prefix + inst.name + ".", rows)
+                elif inst.module in ('tranif0', 'tranif1'):
+                    # primitive tranif 직접 인스턴스
+                    count0 = 1 if inst.module == 'tranif0' else 0
+                    count1 = 1 if inst.module == 'tranif1' else 0
+                    rows.append({
+                        'InstancePath': path_prefix + inst.name,
+                        'ModuleName': inst.module,
+                        'tranif0_count': count0,
+                        'tranif1_count': count1
+                    })
+                else:
+                    # 다른 primitive
+                    rows.append({
+                        'InstancePath': path_prefix + inst.name,
+                        'ModuleName': inst.module,
+                        'tranif0_count': 0,
+                        'tranif1_count': 0
+                    })
 
-def main(top_module_name, verilog_files, leaf_output_csv):
+def main(top_module_name, verilog_files, csv_output):
     ast, _ = parse(verilog_files)
-    global module_defs, leaf_cache, tranif_cache, max_depth, max_depth_path
+    global module_defs, leaf_cache, tranif_cache
     module_defs = build_module_defs(ast)
     leaf_cache = {}
     tranif_cache = {}
-    max_depth = -1
-    max_depth_path = ""
 
     if top_module_name not in module_defs:
         print(f"Error: Top module '{top_module_name}' not found.")
         return
 
-    # 디자인 전체 leaf module + 재귀 tranif count
-    leaf_modules = []
+    # 디자인 전체 leaf module stdout 출력
+    leaf_modules = set()
     for modname in module_defs:
         if is_leaf_module(modname):
-            tcount = recursive_tranif_count(modname)
-            leaf_modules.append({
-                'ModuleName': modname,
-                'tranif0_count': tcount['tranif0'],
-                'tranif1_count': tcount['tranif1']
-            })
+            leaf_modules.add(modname)
+    print("Leaf modules found in design (unique):")
+    for m in sorted(leaf_modules):
+        print(m)
 
-    # leaf module 출력
-    with open(leaf_output_csv, 'w', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=['ModuleName', 'tranif0_count', 'tranif1_count'])
+    # TOP 하위 instance tranif 집계
+    rows = []
+    traverse_and_collect(top_module_name, top_module_name + ".", rows)
+
+    # CSV 출력
+    with open(csv_output, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=['InstancePath', 'ModuleName', 'tranif0_count', 'tranif1_count'])
         writer.writeheader()
-        writer.writerows(leaf_modules)
-    print(f"Design-wide unique leaf modules with recursive tranif count written to {leaf_output_csv}")
-
-    # 최대 tranif 깊이 + 경로 탐색
-    traverse_for_depth(top_module_name, [top_module_name], 0)
-    if max_depth >= 0:
-        print(f"Maximum tranif depth: {max_depth}")
-        print(f"Path: {max_depth_path}")
-    else:
-        print("No tranif0 or tranif1 found in design hierarchy.")
+        writer.writerows(rows)
+    print(f"TOP hierarchy instance tranif counts written to {csv_output}")
 
 if __name__ == '__main__':
     import sys
     if len(sys.argv) < 4:
-        print("Usage: python script.py <top_module_name> <leaf_output_csv> <verilog_file1> [<verilog_file2> ...]")
+        print("Usage: python script.py <top_module_name> <output_csv> <verilog_file1> [<verilog_file2> ...]")
     else:
         top_module_name = sys.argv[1]
-        leaf_output_csv = sys.argv[2]
+        csv_output = sys.argv[2]
         verilog_files = sys.argv[3:]
-        main(top_module_name, verilog_files, leaf_output_csv)
+        main(top_module_name, verilog_files, csv_output)
