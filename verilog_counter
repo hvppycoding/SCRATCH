@@ -1,0 +1,96 @@
+from pyverilog.vparser.parser import parse
+from pyverilog.vparser.ast import ModuleDef, InstanceList, Instance
+import csv
+
+def build_module_defs(ast):
+    return {d.name: d for d in ast.description.definitions if isinstance(d, ModuleDef)}
+
+def analyze_module(module_name):
+    """Return tranif0/1 count and children instance modules with caching"""
+    if module_name in module_analysis_cache:
+        return module_analysis_cache[module_name]
+
+    module = module_defs[module_name]
+    tranif_count = {'tranif0': 0, 'tranif1': 0}
+    children = []
+    for item in module.items:
+        if isinstance(item, InstanceList):
+            for inst in item.instances:
+                if inst.module == 'tranif0':
+                    tranif_count['tranif0'] += 1
+                elif inst.module == 'tranif1':
+                    tranif_count['tranif1'] += 1
+                else:
+                    children.append((inst.name, inst.module))
+    
+    result = (tranif_count, children)
+    module_analysis_cache[module_name] = result
+    return result
+
+def traverse(module_name, path, depth):
+    tranif_count, children = analyze_module(module_name)
+    global max_depth, max_depth_path
+    if tranif_count['tranif0'] > 0 or tranif_count['tranif1'] > 0:
+        if depth > max_depth:
+            max_depth = depth
+            max_depth_path = ' > '.join(path)
+    
+    for inst_name, child_module in children:
+        if child_module in module_defs:
+            traverse(child_module, path + [inst_name], depth + 1)
+
+def main(top_module_name, verilog_files, csv_output):
+    ast, _ = parse(verilog_files)
+    global module_defs, module_analysis_cache, max_depth, max_depth_path
+    module_defs = build_module_defs(ast)
+    module_analysis_cache = {}
+    max_depth = -1
+    max_depth_path = ""
+
+    if top_module_name not in module_defs:
+        print(f"Error: Top module '{top_module_name}' not found.")
+        return
+
+    # 1️⃣ TOP block 내 총 instance 수
+    top_module = module_defs[top_module_name]
+    total_instances = sum(len(item.instances) for item in top_module.items if isinstance(item, InstanceList))
+    print(f"Total instances in TOP module '{top_module_name}': {total_instances}")
+
+    # 2️⃣ 각 instance 별 tranif0/1 수 (CSV)
+    rows = []
+    for item in top_module.items:
+        if isinstance(item, InstanceList):
+            for inst in item.instances:
+                module = inst.module
+                if module in module_defs:
+                    tcount, _ = analyze_module(module)
+                    rows.append({
+                        'InstanceName': inst.name,
+                        'ModuleName': module,
+                        'tranif0_count': tcount['tranif0'],
+                        'tranif1_count': tcount['tranif1']
+                    })
+
+    with open(csv_output, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=['InstanceName', 'ModuleName', 'tranif0_count', 'tranif1_count'])
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"Instance tranif counts written to {csv_output}")
+
+    # 3️⃣ 가장 깊은 tranif 깊이 + 경로
+    traverse(top_module_name, [top_module_name], 0)
+    if max_depth >= 0:
+        print(f"Maximum tranif depth: {max_depth}")
+        print(f"Path: {max_depth_path}")
+    else:
+        print("No tranif0 or tranif1 found in design hierarchy.")
+
+if __name__ == '__main__':
+    import sys
+    if len(sys.argv) < 4:
+        print("Usage: python script.py <top_module_name> <output_csv> <verilog_file1> [<verilog_file2> ...]")
+    else:
+        top_module_name = sys.argv[1]
+        csv_output = sys.argv[2]
+        verilog_files = sys.argv[3:]
+        main(top_module_name, verilog_files, csv_output)
