@@ -2,16 +2,15 @@
 
 import subprocess
 import sys
-import json
-import requests
+import openai
 
 def get_staged_diff():
     result = subprocess.run(["git", "diff", "--cached"], capture_output=True, text=True)
     return result.stdout
 
 def main():
-    # ⚠️ Replace this with your actual API key
-    api_key = "YOUR_OPENAI_API_KEY_HERE"
+    # ⚠️ Replace with your actual API key
+    openai.api_key = "YOUR_OPENAI_API_KEY_HERE"
 
     diff_output = get_staged_diff()
     if not diff_output.strip():
@@ -25,33 +24,21 @@ def main():
         {"role": "user", "content": f"Suggest an informative commit message by summarizing code changes from the shared command output. The commit message should follow the conventional commit format and provide meaningful context for future readers.\n\nChanges:\n{diff_limited}"}
     ]
 
-    payload = {
-        "model": "gpt-4",
-        "messages": messages,
-        "temperature": 0.5,
-        "max_tokens": 100
-    }
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-
-    # TODO: Replace URL below with your API server endpoint if needed
-    url = "https://api.openai.com/v1/chat/completions"
-
-    response = requests.post(url, headers=headers, json=payload)
-    if response.status_code != 200:
-        print(f"🚫 API request failed. Status: {response.status_code}")
-        print(f"⚠️ API Response: {response.text}")
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=messages,
+            temperature=0.5,
+            max_tokens=100
+        )
+    except Exception as e:
+        print(f"🚫 OpenAI API request failed: {e}")
         sys.exit(1)
 
-    data = response.json()
-    commit_message = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    commit_message = response.choices[0].message["content"].strip() if response.choices else ""
 
     if not commit_message:
         print("🚫 Failed to generate a commit message from OpenAI.")
-        print(f"⚠️ API Response: {response.text}")
         sys.exit(1)
 
     print("🤖 Suggested commit message:")
