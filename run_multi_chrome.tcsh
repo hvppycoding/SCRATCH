@@ -5,7 +5,7 @@ set HOSTNAME = `hostname`
 set USERNAME = `whoami`
 set BASE_PROFILE = /user/$USERNAME/.config/google-chrome
 set TMP_PROFILE = /tmp/${USERNAME}_chrome_profile_${HOSTNAME}
-set PROFILE_COPIED = 0  # flag
+set PROFILE_COPIED = 0  # flag to track copy state
 
 # === ANSI Colors ===
 set COLOR_INFO = "\033[1;34m"
@@ -47,7 +47,7 @@ if ($CHROME_EXIT != 0) then
     echo "${COLOR_WARN}==> Chrome exited with non-zero code: $CHROME_EXIT${COLOR_RESET}"
 endif
 
-# === Sync back only if initial profile was copied ===
+# === Sync back only if profile was copied ===
 if ($PROFILE_COPIED == 1) then
     echo "${COLOR_INFO}==> Syncing changes back to base profile...${COLOR_RESET}"
     rsync -au \
@@ -55,10 +55,11 @@ if ($PROFILE_COPIED == 1) then
         --exclude='/SingletonSocket' \
         --exclude='/SingletonCookie' \
         "$TMP_PROFILE/" "$BASE_PROFILE/"
-endif
 
-# === Clean up temporary profile ===
-echo "${COLOR_INFO}==> Cleaning up temporary profile...${COLOR_RESET}"
-rm -rf "$TMP_PROFILE"
+    echo "${COLOR_INFO}==> Cleaning up temporary profile...${COLOR_RESET}"
+    rm -rf "$TMP_PROFILE"
+else
+    echo "${COLOR_INFO}==> Temporary profile not created in this session. Not deleting.${COLOR_RESET}"
+endif
 
 echo "${COLOR_DONE}==> Done.${COLOR_RESET}"
