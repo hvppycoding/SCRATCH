@@ -219,18 +219,20 @@ def main(filename: str, target_module_name: str) -> nx.Graph:
     return G
 
 def find_equivalent_connectivity_modules(module_defs: List[ModuleInterface], ast: Node) -> List[set[str]]:
-        graphs = {}
+    graphs = {}
+    summaries = {}
+
     for mod in module_defs:
         try:
             mod_ast = find_module_by_name(ast, mod.name)
             creator = GraphCreator(module_defs)
             creator.create_from_module(mod_ast)
-            graphs[mod.name] = creator.get_graph()
+            graph = creator.get_graph()
+            graphs[mod.name] = graph
         except RuntimeError:
             continue
 
     from collections import Counter
-
     def module_summary(graph: nx.Graph) -> tuple:
         types = Counter()
         directions = Counter()
@@ -244,29 +246,20 @@ def find_equivalent_connectivity_modules(module_defs: List[ModuleInterface], ast
                 directions[d.get("direction")] += 1
         return (types, directions, modules)
 
-    summaries = {}
-    for mod in module_defs:
-        g = graphs.get(mod.name)
-        if g:
-            summaries[mod.name] = module_summary(g)
+    for name, g in graphs.items():
+        summaries[name] = module_summary(g)
 
-
-    from itertools import combinations
     grouped: dict[tuple, list[str]] = {}
-    for mod in module_defs:
-        g = graphs.get(mod.name)
-        if g:
-            key = summaries[mod.name]
-            grouped.setdefault(key, []).append(mod.name)
+    for name, summary in summaries.items():
+        grouped.setdefault(summary, []).append(name)
 
-        groups: List[set[str]] = []
-
+    clusters: List[set[str]] = []
     for group in grouped.values():
-        clustered: List[set[str]] = []
-        for mod in group:
-            g1 = graphs.get(mod)
+        seen: List[set[str]] = []
+        for name in group:
+            g1 = graphs.get(name)
             found = False
-            for cluster in clustered:
+            for cluster in seen:
                 rep = next(iter(cluster))
                 g2 = graphs.get(rep)
                 if g1 and g2 and nx.is_isomorphic(
@@ -279,12 +272,14 @@ def find_equivalent_connectivity_modules(module_defs: List[ModuleInterface], ast
                     ),
                     edge_match=lambda e1, e2: e1.get("port") == e2.get("port")
                 ):
-                    cluster.add(mod)
+                    cluster.add(name)
+                    found = True
+                    break
+            if not found:
+                seen.append(set([name]))
+        clusters.extend(seen)
 
-        if g1 is None:
-            continue
-
-    return matches
+    return [c for c in clusters if len(c) > 1]
 
 # Example usage:
 # graph = main("your_file.v", "your_module_name")
