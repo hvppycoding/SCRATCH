@@ -218,7 +218,7 @@ def main(filename: str, target_module_name: str) -> nx.Graph:
 
     return G
 
-def find_equivalent_connectivity_modules(module_defs: List[ModuleInterface], ast: Node) -> List[tuple[str, str]]:
+def find_equivalent_connectivity_modules(module_defs: List[ModuleInterface], ast: Node) -> List[set[str]]:
         graphs = {}
     for mod in module_defs:
         try:
@@ -259,27 +259,27 @@ def find_equivalent_connectivity_modules(module_defs: List[ModuleInterface], ast
             key = summaries[mod.name]
             grouped.setdefault(key, []).append(mod.name)
 
-    matches = []
-    done = set()
+        groups: List[set[str]] = []
+
     for group in grouped.values():
-        for name1, name2 in combinations(group, 2):
-            if (name1, name2) in done or (name2, name1) in done:
-                continue
-            g1, g2 = graphs.get(name1), graphs.get(name2)
-            if not g1 or not g2:
-                continue
-            if nx.is_isomorphic(
-                g1,
-                g2,
-                node_match=lambda n1, n2: (
-                    n1.get("type") == n2.get("type") and
-                    (n1.get("type") != "net" or n1.get("direction") == n2.get("direction")) and
-                    (n1.get("type") != "instance" or n1.get("module") == n2.get("module"))
-                ),
-                edge_match=lambda e1, e2: e1.get("port") == e2.get("port")
-            ):
-                matches.append((name1, name2))
-                done.add((name1, name2))
+        clustered: List[set[str]] = []
+        for mod in group:
+            g1 = graphs.get(mod)
+            found = False
+            for cluster in clustered:
+                rep = next(iter(cluster))
+                g2 = graphs.get(rep)
+                if g1 and g2 and nx.is_isomorphic(
+                    g1,
+                    g2,
+                    node_match=lambda n1, n2: (
+                        n1.get("type") == n2.get("type") and
+                        (n1.get("type") != "net" or n1.get("direction") == n2.get("direction")) and
+                        (n1.get("type") != "instance" or n1.get("module") == n2.get("module"))
+                    ),
+                    edge_match=lambda e1, e2: e1.get("port") == e2.get("port")
+                ):
+                    cluster.add(mod)
 
         if g1 is None:
             continue
