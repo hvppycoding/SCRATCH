@@ -95,7 +95,7 @@ class GraphCreator:
 
                 for inst in item.instances:
                     inst_name = inst.name
-                    self.graph.add_node(inst_name, type='instance', submodule=submod_name)
+                    self.graph.add_node(inst_name, type='instance', module=submod_name)
 
                     for idx, conn in enumerate(inst.portlist):
                         # Determine port name
@@ -137,20 +137,20 @@ def draw_connectivity_graph(G: nx.Graph) -> None:
     pos = nx.spring_layout(G, seed=42)
 
     net_colors = {
-        'input': '#e74c3c',    # red
-        'output': '#3498db',   # blue
-        'inout': '#2ecc71',    # green
-        'internal': '#f1c40f'  # yellow
+        'input': '#f1948a',    # light red
+        'output': '#85c1e9',   # light blue
+        'inout': '#abebc6',    # light green
+        'internal': '#f9e79f'  # light yellow
     }
 
     # Draw net nodes
     for direction, color in net_colors.items():
         nodes = [n for n, d in G.nodes(data=True) if d['type'] == 'net' and d['direction'] == direction]
-        nx.draw_networkx_nodes(G, pos, nodelist=nodes, node_size=300, node_color=color, edgecolors='black', linewidths=1)
+        nx.draw_networkx_nodes(G, pos, nodelist=nodes, node_size=500, node_color=color, edgecolors='black', linewidths=1)
 
     # Draw instance nodes
     inst_nodes = [n for n, d in G.nodes(data=True) if d['type'] == 'instance']
-    nx.draw_networkx_nodes(G, pos, nodelist=inst_nodes, node_size=800, node_color='white', edgecolors='black', linewidths=1)
+    nx.draw_networkx_nodes(G, pos, nodelist=inst_nodes, node_size=1000, node_color='white', edgecolors='black', linewidths=1)
 
     # Draw edges with port names
     edge_labels = {(u, v): d['port'] for u, v, d in G.edges(data=True)}
@@ -161,7 +161,7 @@ def draw_connectivity_graph(G: nx.Graph) -> None:
     labels = {}
     for n, d in G.nodes(data=True):
         if d['type'] == 'instance':
-            labels[n] = f"{d['submodule']}\n{n}"
+            labels[n] = f"{d['module']}\n{n}"
         else:
             labels[n] = n
     nx.draw_networkx_labels(G, pos, labels=labels, font_size=8)
