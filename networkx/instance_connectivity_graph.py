@@ -47,8 +47,30 @@ class ModuleInterface:
         interface.validate()
         return interface
 
-def create_module_interfaces(node: Node) -> List[ModuleInterface]:
-    interfaces: List[ModuleInterface] = []
+def create_primitive_interfaces() -> List[ModuleInterface]:
+    primitives = []
+
+    for name in ["tranif1", "tranif0"]:
+        m = ModuleInterface(name)
+        m.port_order = ["out", "in", "control"]
+        m.port_directions = {"out": "inout", "in": "inout", "control": "input"}
+        primitives.append(m)
+
+    for name in ["pmos", "nmos"]:
+        m = ModuleInterface(name)
+        m.port_order = ["out", "data", "control"]
+        m.port_directions = {"out": "inout", "data": "inout", "control": "input"}
+        primitives.append(m)
+
+    return primitives
+
+def create_module_interfaces(node: Node, include_primitives: bool = True) -> List[ModuleInterface]:
+    primitive_defs = create_primitive_interfaces() if include_primitives else []
+
+    
+    
+
+    interfaces: List[ModuleInterface] = primitive_defs.copy()
     def walk(n: Node):
         if isinstance(n, ModuleDef):
             interface = ModuleInterface.create_from_module_def(n)
@@ -106,12 +128,12 @@ class GraphCreator:
                         else:
                             portname = conn.portname
 
-                        # Determine net name
-                        if hasattr(conn.argname, 'name'):
-                            netname = conn.argname.name
-                        elif isinstance(conn.argname, str):
-                            netname = conn.argname
-                        else:
+                        # Determine net name using Verilog code string
+                        from pyverilog.ast_code_generator.codegen import ASTCodeGenerator
+                        codegen = ASTCodeGenerator()
+                        try:
+                            netname = codegen.visit(conn.argname)
+                        except Exception:
                             continue
 
                         # Check if it's external or internal net
@@ -195,6 +217,74 @@ def main(filename: str, target_module_name: str) -> nx.Graph:
             print(f"{node}: {data['direction']}")
 
     return G
+
+def find_equivalent_connectivity_modules(module_defs: List[ModuleInterface], ast: Node) -> List[tuple[str, str]]:
+        graphs = {}
+    for mod in module_defs:
+        try:
+            mod_ast = find_module_by_name(ast, mod.name)
+            creator = GraphCreator(module_defs)
+            creator.create_from_module(mod_ast)
+            graphs[mod.name] = creator.get_graph()
+        except RuntimeError:
+            continue
+
+    from collections import Counter
+
+    def module_summary(graph: nx.Graph) -> tuple:
+        types = Counter()
+        directions = Counter()
+        modules = Counter()
+        for n, d in graph.nodes(data=True):
+            if d["type"] == "instance":
+                types["instance"] += 1
+                modules[d.get("module")] += 1
+            elif d["type"] == "net":
+                types["net"] += 1
+                directions[d.get("direction")] += 1
+        return (types, directions, modules)
+
+    summaries = {}
+    for mod in module_defs:
+        g = graphs.get(mod.name)
+        if g:
+            summaries[mod.name] = module_summary(g)
+
+
+    from itertools import combinations
+    grouped: dict[tuple, list[str]] = {}
+    for mod in module_defs:
+        g = graphs.get(mod.name)
+        if g:
+            key = summaries[mod.name]
+            grouped.setdefault(key, []).append(mod.name)
+
+    matches = []
+    done = set()
+    for group in grouped.values():
+        for name1, name2 in combinations(group, 2):
+            if (name1, name2) in done or (name2, name1) in done:
+                continue
+            g1, g2 = graphs.get(name1), graphs.get(name2)
+            if not g1 or not g2:
+                continue
+            if nx.is_isomorphic(
+                g1,
+                g2,
+                node_match=lambda n1, n2: (
+                    n1.get("type") == n2.get("type") and
+                    (n1.get("type") != "net" or n1.get("direction") == n2.get("direction")) and
+                    (n1.get("type") != "instance" or n1.get("module") == n2.get("module"))
+                ),
+                edge_match=lambda e1, e2: e1.get("port") == e2.get("port")
+            ):
+                matches.append((name1, name2))
+                done.add((name1, name2))
+
+        if g1 is None:
+            continue
+
+    return matches
 
 # Example usage:
 # graph = main("your_file.v", "your_module_name")
