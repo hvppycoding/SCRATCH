@@ -14,7 +14,7 @@ from autogen_agentchat.agents import (
 )
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_ext.code_executors.local import LocalCommandLineCodeExecutor
-from autogen_agentchat.teams import GroupChat, GroupChatManager
+from autogen_agentchat.teams import BasicGroupChat, GroupChatManager
 from autogen_agentchat.conditions import TextMentionTermination, MaxMessageTermination
 
 # === 파일 준비 ===
@@ -64,7 +64,7 @@ user_proxy = UserProxyAgent(
 
 # === 그룹챗 설정 ===
 termination = TextMentionTermination("__DONE__") | MaxMessageTermination(12)
-group = GroupChat(
+group = BasicGroupChat(
     agents=[user_proxy, coder, executor, critic],
     messages=[],
     max_round=12,
