@@ -13,22 +13,22 @@ from autogen_ext.code_executors.local import LocalCommandLineCodeExecutor
 from autogen_agentchat.teams import RoundRobinGroupChat
 from autogen_agentchat.conditions import TextMentionTermination, MaxMessageTermination
 
-# ---------- 파일 및 디렉터리 설정 ----------
+# ---------- 파일 준비 ----------
 work_dir = Path("group_chat")
 csv_source_path = Path("data/titanic.csv")
 csv_dest_path = work_dir / "titanic.csv"
-
 work_dir.mkdir(exist_ok=True)
 if not csv_dest_path.exists():
     shutil.copy(csv_source_path, csv_dest_path)
 
-# ---------- LLM 클라이언트 ----------
+# ---------- Qwen3 @ vLLM 설정 ----------
 client = OpenAIChatCompletionClient(
-    model="gpt-4o",
-    api_key=os.getenv("OPENAI_API_KEY") or "NULL"  # vLLM 사용할 경우
+    model="Qwen/Qwen1.5-0.5B-Chat",  # 실제 모델 이름
+    api_key="NULL",                  # vLLM에선 의미 없음
+    base_url="http://localhost:8000/v1"  # vLLM 기본 URL
 )
 
-# ---------- 에이전트 정의 ----------
+# ---------- 에이전트 ----------
 assistant = AssistantAgent(
     name="assistant",
     system_message="You are a helpful assistant. Use Python to analyze CSV data and generate visualizations.",
@@ -44,7 +44,7 @@ user_proxy = UserProxyAgent(
     name="user_proxy"
 )
 
-# ---------- Group Chat 구성 ----------
+# ---------- 그룹 채팅 ----------
 termination = TextMentionTermination("TERMINATE") | MaxMessageTermination(10)
 
 group = RoundRobinGroupChat(
@@ -56,14 +56,13 @@ group = RoundRobinGroupChat(
 async def main():
     task = """
 Use the file 'group_chat/titanic.csv' to load the dataset.
-1. Print the column names first.
-2. Then visualize the relationship between 'age' and 'pclass'.
-3. Save the plot as 'age_vs_pclass.png' in the same directory.
-When you're done, say 'TERMINATE'.
+1. Print the column names.
+2. Visualize the relationship between 'age' and 'pclass'.
+3. Save the plot as 'age_vs_pclass.png'.
+After finishing, reply with 'TERMINATE'.
 """
     async for msg in group.run_stream(task=task):
         print(f"{msg.agent_name}:\n{msg.content}\n")
-
     await client.close()
 
 if __name__ == "__main__":
