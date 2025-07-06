@@ -1,75 +1,70 @@
 import os
 import shutil
-import autogen
+import asyncio
+from pathlib import Path
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from autogen.coding import LocalCommandLineCodeExecutor
 
-# 파일 경로 설정
-local_file = "data/titanic.csv"
-work_dir = "group_chat"
-os.makedirs(work_dir, exist_ok=True)
-shutil.copy(local_file, os.path.join(work_dir, "titanic.csv"))
+from autogen_agentchat.agents import AssistantAgent, UserProxyAgent, CodeExecutorAgent
+from autogen_ext.models.openai import OpenAIChatCompletionClient
+from autogen_ext.code_executors.local import LocalCommandLineCodeExecutor
+from autogen_agentchat.teams import RoundRobinGroupChat
+from autogen_agentchat.conditions import TextMentionTermination, MaxMessageTermination
 
-# LLM 설정 (vLLM + Qwen3 연동 가정)
-llm_config = {
-    "config_list": [
-        {
-            "model": "Qwen/Qwen1.5-0.5B-Chat",  # or other Qwen3 model
-            "base_url": "http://localhost:8000/v1",
-            "api_key": "NULL",
-        }
-    ]
-}
+# ---------- 파일 및 디렉터리 설정 ----------
+work_dir = Path("group_chat")
+csv_source_path = Path("data/titanic.csv")
+csv_dest_path = work_dir / "titanic.csv"
 
-# UserProxy (입력 없음)
-user_proxy = autogen.UserProxyAgent(
-    name="user_proxy",
-    system_message="A human admin.",
-    code_execution_config={
-        "executor": LocalCommandLineCodeExecutor(work_dir=work_dir)
-    },
-    human_input_mode="NEVER",
+work_dir.mkdir(exist_ok=True)
+if not csv_dest_path.exists():
+    shutil.copy(csv_source_path, csv_dest_path)
+
+# ---------- LLM 클라이언트 ----------
+client = OpenAIChatCompletionClient(
+    model="gpt-4o",
+    api_key=os.getenv("OPENAI_API_KEY") or "NULL"  # vLLM 사용할 경우
 )
 
-# 코딩 에이전트
-coder = autogen.AssistantAgent(
-    name="coder",
-    llm_config=llm_config,
+# ---------- 에이전트 정의 ----------
+assistant = AssistantAgent(
+    name="assistant",
+    system_message="You are a helpful assistant. Use Python to analyze CSV data and generate visualizations.",
+    model_client=client,
 )
 
-# 비평 에이전트
-critic = autogen.AssistantAgent(
-    name="critic",
-    system_message="""
-You are a highly skilled assistant who evaluates code for data visualization.
-Provide a score from 1 (poor) to 10 (excellent) across these dimensions:
-- bugs
-- transformation
-- compliance
-- type
-- encoding
-- aesthetics
-Format: {bugs: x, transformation: x, compliance: x, type: x, encoding: x, aesthetics: x}
-Do not propose code. Finally, list concrete improvement suggestions for the coder.
-""",
-    llm_config=llm_config,
+code_executor = CodeExecutorAgent(
+    name="code_executor",
+    code_executor=LocalCommandLineCodeExecutor(work_dir=work_dir),
 )
 
-# 그룹 설정
-groupchat = autogen.GroupChat(
-    agents=[user_proxy, coder, critic],
-    messages=[],
-    max_round=10,
+user_proxy = UserProxyAgent(
+    name="user_proxy"
 )
-manager = autogen.GroupChatManager(groupchat=groupchat, llm_config=llm_config)
 
-# 사용자 요청: 로컬 파일 사용
-user_proxy.initiate_chat(
-    manager,
-    message="""
-`group_chat/titanic.csv` 파일을 사용해서 분석을 진행해주세요.
-먼저 데이터의 컬럼명을 출력한 후, `age`와 `pclass` 변수 간의 관계를 시각화하는 차트를 만들어 PNG 파일로 저장해주세요.
+# ---------- Group Chat 구성 ----------
+termination = TextMentionTermination("TERMINATE") | MaxMessageTermination(10)
+
+group = RoundRobinGroupChat(
+    agents=[assistant, code_executor],
+    termination_condition=termination,
+)
+
+# ---------- 실행 ----------
+async def main():
+    task = """
+Use the file 'group_chat/titanic.csv' to load the dataset.
+1. Print the column names first.
+2. Then visualize the relationship between 'age' and 'pclass'.
+3. Save the plot as 'age_vs_pclass.png' in the same directory.
+When you're done, say 'TERMINATE'.
 """
-)
+    async for msg in group.run_stream(task=task):
+        print(f"{msg.agent_name}:\n{msg.content}\n")
+
+    await client.close()
+
+if __name__ == "__main__":
+    asyncio.run(main())
