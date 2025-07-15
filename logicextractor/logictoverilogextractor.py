@@ -3,6 +3,43 @@
 from pyeda.inter import exprvars, truthtable, espresso_tts, expr
 import itertools
 
+
+from typing import List, Dict
+import pandas as pd
+from pyeda.inter import expr, truthtable
+
+class LogicToVerilogNetlist:
+
+    @staticmethod
+    def boolean_exprs_from_df(df: pd.DataFrame,
+                              input_vars: List[str],
+                              output_vars: List[str]) -> Dict[str, 'Expr']:
+        """
+        Converts a DataFrame truth table into PyEDA boolean expressions.
+        
+        df: pd.DataFrame with input/output columns
+        input_vars: list of column names to use as inputs
+        output_vars: list of column names to use as outputs
+
+        Returns: Dict mapping each output var name to a PyEDA Expr
+        """
+        expr_vars = [expr(name) for name in input_vars]
+        num_rows_expected = 2 ** len(input_vars)
+        if len(df) != num_rows_expected:
+            raise ValueError(f"Expected {num_rows_expected} rows, got {len(df)}")
+
+        exprs = {}
+        for out_var in output_vars:
+            if out_var not in df.columns:
+                raise ValueError(f"Output variable '{out_var}' not found in DataFrame")
+
+            values = df[out_var].tolist()
+            tt = truthtable(expr_vars, values)
+            exprs[out_var] = tt.to_expr()
+
+        return exprs
+
+
 class LogicToVerilogNetlist:
     def __init__(self, output_wire_name="Y"):
         self.output_wire_name = output_wire_name
