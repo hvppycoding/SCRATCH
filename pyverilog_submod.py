@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 """
-submod-like pass using Pyverilog (robust PortArg + params)
+submod-like pass using Pyverilog (argname-safe, positional+named ports, params preserved)
 
 Usage:
-  python pyverilog_submod.py -f instance.list -t <target_module> [-n <new_module_name>] [-o out.v] netlist1.v [netlist2.v ...]
+  python pyverilog_submod_v3.py -f instance.list -t <target_module> [-n <new_module_name>] [-o out.v] netlist1.v [netlist2.v ...]
 
 - Reads instance names from instance.list (one per line, '#' comments allowed)
 - Moves those instances from <target_module> into a new submodule
-- Replaces external net/slice/concat references with ports on the new submodule
+- Replaces external net/slice/concat/repeat references with ports on the new submodule
 - Connects the new submodule instance back into <target_module>
 
-Key guarantees in this version:
-- PortArg 케이스 전부 지원: 이름 기반(.p(x)), 순서 기반(positional), 포인터 a[i], 슬라이스 a[msb:lsb], 멀티비트 식별자 a, 컨캣 {..}, 반복 {N{..}}
-- 파라미터 오버라이드: 이름 기반과 순서 기반 모두 원형대로 보존(deepcopy)
-- 포트 방향 추론: 모듈 정의(존재 시)에서 방향을 가져오고, positional의 경우 포트 순서 매핑으로 방향 결정. 정의가 없으면 inout
-- 슬라이스/포인터/컨캣의 폭 계산 정확화
-
-Notes:
-- 대상은 구조적 넷리스트(InstanceList/Decl/Ioport). assign/process/memory는 범위 밖(필요 시 확장 가능)
+Guarantees:
+- PortArg 안전: Pyverilog PortArg는 `arg`가 아닌 `argname`을 사용. 포지셔널/네임드 모두 처리.
+- 포인터(a[i]) / 슬라이스(a[MSB:LSB]) / 멀티비트 식별자 / Concat / Repeat / IntConst 모두 지원.
+- 파라미터 오버라이드(이름/순서 모두) 원형 보존.
+- 포지셔널 연결은 새 AST에서도 포지셔널(PortArg(None, expr))로 유지.
+- 포트 방향은 모듈 정의에서 추론(포트 순서까지 고려), 없으면 inout.
 """
 
 import argparse
@@ -95,17 +93,14 @@ def module_port_directions(mod: ModuleDef) -> Dict[str, Tuple[str, Optional[Widt
 
 def module_port_order(mod: ModuleDef) -> List[str]:
     order: List[str] = []
-    # ANSI-style: ModuleDef.portlist holds ordered Port entries
     pl = getattr(mod, 'portlist', None)
     if isinstance(pl, Portlist) and pl.ports:
         for p in pl.ports:
             if isinstance(p, Port):
                 order.append(p.name)
             else:
-                # Fallback: stringify
                 order.append(str(p))
     else:
-        # As a fallback, derive order from Ioport encounter order
         for item in getattr(mod, 'items', []):
             if isinstance(item, Ioport):
                 pname = item.first.name if isinstance(item.first, Port) else str(item.first)
@@ -141,22 +136,16 @@ def decl_width_symtab(mod: ModuleDef) -> Dict[str, Optional[Width]]:
     return sym
 
 
-# -------------- numeric helpers --------------
+# -------------- numeric & width helpers --------------
 
 def _parse_intconst_value(val: str) -> Optional[int]:
-    """Parse IntConst textual value to Python int if possible.
-    Supports decimal ("123"), and sized forms like 8'hFF, 6'o77, 4'b1010.
-    Returns None if cannot be parsed.
-    """
     val = val.replace('_', '')
-    # unsized decimal like "123"
     if re.fullmatch(r"[0-9]+", val):
         return int(val, 10)
     m = re.fullmatch(r"(\d+)?'([bBhHdDoO])([0-9a-fA-FxXzZ]+)", val)
     if m:
         base_ch = m.group(2).lower()
         digits = m.group(3).lower()
-        # treat x/z as 0 in numeric evaluation context
         digits = re.sub(r"[xz]", '0', digits)
         base = {'b':2, 'o':8, 'd':10, 'h':16}[base_ch]
         try:
@@ -167,9 +156,6 @@ def _parse_intconst_value(val: str) -> Optional[int]:
 
 
 def _eval_simple(node) -> Optional[int]:
-    """Evaluate very simple constant expressions: IntConst, Plus, Minus, UnaryMinus.
-    Return None if not resolvable.
-    """
     from pyverilog.vparser.ast import Plus, Minus, Uminus
     if isinstance(node, IntConst):
         return _parse_intconst_value(node.value)
@@ -186,14 +172,12 @@ def _eval_simple(node) -> Optional[int]:
 
 
 def width_from_widthnode(width: Optional[Width]) -> int:
-    """Compute declared vector width given a Width(msb, lsb). Defaults to 1 if unknown."""
     if width is None:
         return 1
     msb_v = _eval_simple(width.msb)
     lsb_v = _eval_simple(width.lsb)
     if msb_v is not None and lsb_v is not None:
         return abs(msb_v - lsb_v) + 1
-    # Unknown params/expr → conservative 1
     return 1
 
 
@@ -205,7 +189,6 @@ def compute_expr_width(expr, sym: Dict[str, Optional[Width]]) -> int:
     if isinstance(expr, Pointer):
         return 1
     if isinstance(expr, Partselect):
-        # constant bounds → exact, else fall back to declared width of base
         msb_v = _eval_simple(expr.msb)
         lsb_v = _eval_simple(expr.lsb)
         if msb_v is not None and lsb_v is not None:
@@ -216,8 +199,7 @@ def compute_expr_width(expr, sym: Dict[str, Optional[Width]]) -> int:
     if isinstance(expr, IntConst):
         v = _parse_intconst_value(expr.value)
         if v is None:
-            return 32  # unknown → 32-bit heuristic
-        # minimal bitwidth to encode v (at least 1)
+            return 32
         return max(v.bit_length(), 1)
     if isinstance(expr, Concat):
         return sum(compute_expr_width(c, sym) for c in expr.list)
@@ -225,7 +207,6 @@ def compute_expr_width(expr, sym: Dict[str, Optional[Width]]) -> int:
         times = _eval_simple(expr.times)
         times = times if times is not None else 1
         return times * compute_expr_width(expr.value, sym)
-    # default conservative
     return 1
 
 
@@ -247,8 +228,26 @@ def list_instances(mod: ModuleDef):
     for item in getattr(mod, 'items', []):
         if isinstance(item, InstanceList):
             for inst in item.instances:
-                res.append((item, inst))  # (container InstanceList, Instance)
+                res.append((item, inst))
     return res
+
+
+# PortArg helpers -------------------------------------------------------------
+
+def portarg_expr(node):
+    return node.argname if isinstance(node, PortArg) else node
+
+
+def portarg_is_named(node) -> bool:
+    return isinstance(node, PortArg) and (node.portname is not None)
+
+
+def portarg_portname(node, order: List[str], idx: int) -> Optional[str]:
+    if isinstance(node, PortArg) and node.portname is not None:
+        return node.portname
+    if 0 <= idx < len(order):
+        return order[idx]
+    return None
 
 
 def gather_usage_sets(mod: ModuleDef, selected_names: Set[str]):
@@ -264,14 +263,14 @@ def gather_usage_sets(mod: ModuleDef, selected_names: Set[str]):
     for item in getattr(mod, 'items', []):
         if isinstance(item, InstanceList):
             for inst in item.instances:
-                for arg in (inst.portlist or []):
+                for parg in (inst.portlist or []):
+                    expr = portarg_expr(parg)
                     ids: Set[str] = set()
-                    collect_identifiers(arg.arg, ids)
+                    collect_identifiers(expr, ids)
                     if inst.name in selected_names:
                         sel_ids |= ids
                     else:
                         others |= ids
-        # TODO: Assign 등 필요 시 확장
     return sel_ids, others, port_names
 
 
@@ -337,12 +336,11 @@ class ExternalRewriter:
         if self.is_pure_external(expr):
             return self.ensure_port(expr)
 
-        # recursive rebuild for known node types
         if isinstance(expr, Identifier):
             return expr
         if isinstance(expr, Pointer):
             var = self.rewrite(expr.var)
-            ptr = expr.ptr  # index as-is (usually IntConst/param)
+            ptr = expr.ptr
             if var is expr.var:
                 return expr
             return Pointer(var, ptr)
@@ -358,7 +356,6 @@ class ExternalRewriter:
         if isinstance(expr, Repeat):
             return Repeat(expr.times, self.rewrite(expr.value))
 
-        # generic: try children, else return as-is
         try:
             _ = [self.rewrite(c) for c in expr.children()]
             return expr
@@ -371,7 +368,7 @@ class ExternalRewriter:
 # ------------------------------
 
 def main():
-    ap = argparse.ArgumentParser(description='submod-like pass using Pyverilog')
+    ap = argparse.ArgumentParser(description='submod-like pass using Pyverilog (v3)')
     ap.add_argument('-f', '--file', required=True, help='Path to instance list file')
     ap.add_argument('-t', '--target', required=True, help='Target module name')
     ap.add_argument('-n', '--name', default=None, help='New submodule name (optional)')
@@ -404,7 +401,6 @@ def main():
     external_ids = (sel_ids & other_ids) | target_ports
 
     newmod_name = args.name or f"{args.target}_submod"
-    # avoid name collision
     if newmod_name in mod_index:
         base = newmod_name
         i = 0
@@ -418,22 +414,24 @@ def main():
     for il, inst in selected:
         inst_modtype = il.module
         meta = module_meta.get(inst_modtype, {'dirs': {}, 'order': []})
-        portdirs = meta['dirs']  # dict name -> (dir,width)
+        portdirs = meta['dirs']  # name -> (dir,width)
         order: List[str] = meta['order']
 
         new_portargs: List[PortArg] = []
-        for idx, pa in enumerate(inst.portlist or []):
-            # Determine effective portname even for positional connections
-            pname = pa.portname if pa.portname is not None else (order[idx] if idx < len(order) else None)
+        for idx, parg in enumerate(inst.portlist or []):
+            pname = portarg_portname(parg, order, idx)
             dirstr = 'inout'
             if pname is not None and pname in portdirs:
                 dirstr = portdirs[pname][0]
             rewriter = ExternalRewriter(external_ids, symtab, dirstr, port_map)
-            new_arg = rewriter.rewrite(pa.arg)
-            # Preserve original naming style (named/positional)
-            new_portargs.append(PortArg(pa.portname, new_arg))
+            expr = portarg_expr(parg)
+            new_arg = rewriter.rewrite(expr)
+            # Preserve named vs positional style
+            if portarg_is_named(parg):
+                new_portargs.append(PortArg(pname, new_arg))
+            else:
+                new_portargs.append(PortArg(None, new_arg))
 
-        # Deepcopy parameter overrides exactly as-is (positional or named)
         new_ilist = InstanceList(inst_modtype, copy.deepcopy(il.paramlist), [Instance(inst_modtype, inst.name, new_portargs, None)])
         rewritten_ilists.append(new_ilist)
 
@@ -444,7 +442,6 @@ def main():
         widthN = info['width']
         wnode = None if widthN == 1 else Width(IntConst(str(widthN - 1)), IntConst('0'))
         dirs = info['dirs']
-        # Direction resolution
         if 'inout' in dirs or (('input' in dirs) and ('output' in dirs)):
             dirnode = Inout(info['name'], width=wnode)
         elif 'output' in dirs and 'input' not in dirs:
@@ -455,7 +452,10 @@ def main():
         port_order.append(info['name'])
 
     # Copy internal net declarations (used by selected but not external)
+    sel_ids, other_ids, _ = gather_usage_sets(target_mod, inst_names)
+    external_ids = (sel_ids & other_ids) | target_ports
     internal_ids = sel_ids - external_ids
+
     decls_to_copy = []
     for item in getattr(target_mod, 'items', []):
         if isinstance(item, Decl):
@@ -478,7 +478,6 @@ def main():
         items=new_items,
     )
 
-    # Insert the new module into AST
     ast.description.definitions.append(newmod)
 
     # Remove selected instances from target module
@@ -488,7 +487,6 @@ def main():
             remaining = [inst for inst in item.instances if inst.name not in inst_names]
             if remaining:
                 new_items_target.append(InstanceList(item.module, copy.deepcopy(item.paramlist), remaining))
-            # else: drop whole list
         else:
             new_items_target.append(item)
     target_mod.items = new_items_target
