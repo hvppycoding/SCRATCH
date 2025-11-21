@@ -80,6 +80,29 @@ OpenAI API의 함수 호출 기능을 보여주는 간단한 예제입니다.
 - 파일 검색
 - OpenAI Agents SDK Strict Mode 호환
 
+### 6. `practical_agent_examples.py`
+**실용적인 에이전트 예제**
+
+실제 개발 작업에서 활용할 수 있는 실용적인 에이전트 예제들입니다.
+
+특징:
+- 프로젝트 구조 자동 생성
+- 코드 리뷰 자동화
+- API 문서 자동 생성
+- 데이터 처리 및 분석
+
+사용법:
+```bash
+# 특정 예제 실행
+python practical_agent_examples.py 1  # 프로젝트 생성
+python practical_agent_examples.py 2  # 코드 리뷰
+python practical_agent_examples.py 3  # 문서 생성
+python practical_agent_examples.py 4  # 데이터 처리
+
+# 모든 예제 실행
+python practical_agent_examples.py
+```
+
 ## 에이전트 패턴
 
 ### 1. 단일 에이전트 패턴
@@ -196,6 +219,31 @@ async def main():
         "Create a simple Python web project with Flask, including main.py, requirements.txt, and README.md"
     )
     print(response)
+
+asyncio.run(main())
+```
+
+### 예제 4: 프로젝트 스캐폴딩 (실용 예제)
+```python
+import asyncio
+from practical_agent_examples import ProjectScaffoldingAgent
+
+async def main():
+    agent = ProjectScaffoldingAgent("/tmp/my_projects")
+    await agent.create_python_project("my_app")
+
+asyncio.run(main())
+```
+
+### 예제 5: 코드 리뷰 (실용 예제)
+```python
+import asyncio
+from practical_agent_examples import CodeReviewAgent
+
+async def main():
+    agent = CodeReviewAgent(["/path/to/your/code"])
+    result = await agent.review_python_file("/path/to/your/code/main.py")
+    print(result)
 
 asyncio.run(main())
 ```
