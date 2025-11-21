@@ -1,8 +1,3 @@
-Here is the Python implementation of the MCP Filesystem tools.
-
-I have encapsulated these tools within a class `FilesystemTools` to manage the "Allowed Directories" security constraint, which is a critical part of the original TypeScript implementation.
-
-```python
 import os
 import sys
 import json
@@ -512,4 +507,3 @@ class FilesystemTools:
             str: Newline-separated list of allowed directories.
         """
         return f"Allowed directories:\n{chr(10).join(self.allowed_directories)}"
-```
