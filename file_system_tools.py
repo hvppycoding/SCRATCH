@@ -8,13 +8,36 @@ import mimetypes
 import tempfile
 import asyncio
 import json
+from enum import Enum
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional, Union, Literal, Any
+from typing import List, Dict, Optional, Union, Any, Literal
+
+from pydantic import BaseModel, Field, ConfigDict
+
+# --- 1. Pydantic Models & Enums for Specific Parts ---
+
+class EditOperation(BaseModel):
+    """
+    Represents a single edit operation for a text file.
+    Used to replace exact text matches with new content.
+    """
+    oldText: str = Field(..., description="Text to search for - must match exactly")
+    newText: str = Field(..., description="Text to replace with")
+    
+    # Strict Mode requirement: forbid unknown fields
+    model_config = ConfigDict(extra='forbid')
+
+class SortBy(str, Enum):
+    """Enum for sorting options in directory listing."""
+    NAME = "name"
+    SIZE = "size"
+
+# --- 2. Filesystem Tools Implementation ---
 
 class FilesystemTools:
     """
-    Async filesystem tools compatible with OpenAI Agents SDK.
+    Async filesystem tools compatible with OpenAI Agents SDK (Strict Mode).
     
     This class mirrors the functionality and security logic of the 
     @modelcontextprotocol/server-filesystem implementation.
@@ -44,14 +67,6 @@ class FilesystemTools:
     async def _validate_path(self, path_str: str) -> Path:
         """
         Validates that a path is within the allowed directories using blocking I/O in a separate thread.
-
-        This method implements strict security checks:
-        1.  Rejects paths containing null bytes.
-        2.  Expands user home directories (~).
-        3.  Resolves absolute paths.
-        4.  Checks if the path sits within an allowed directory.
-        5.  Resolves symlinks to ensure the real target is also allowed.
-        6.  For non-existent files, validates the parent directory.
 
         Args:
             path_str: The raw path string to validate.
@@ -120,12 +135,6 @@ class FilesystemTools:
     def _format_size(self, size_bytes: int) -> str:
         """
         Formats a byte count into a human-readable string (B, KB, MB, etc.).
-
-        Args:
-            size_bytes: The size in bytes.
-
-        Returns:
-            Formatted string (e.g., "1.5 MB").
         """
         if size_bytes == 0: return "0 B"
         units = ("B", "KB", "MB", "GB", "TB")
@@ -135,7 +144,7 @@ class FilesystemTools:
             i += 1
         return f"{size_bytes:.2f} {units[i]}"
 
-    # --- Tool Methods (Standard Python Types) ---
+    # --- Tool Methods ---
     
     async def read_text_file(
         self, 
@@ -146,9 +155,6 @@ class FilesystemTools:
         """
         Reads the complete contents of a file as text.
         
-        Handles various text encodings and provides error messages if the file cannot be read.
-        Supports reading specific portions of the file via head/tail.
-
         Args:
             path: The path to the file.
             tail: If provided, returns only the last N lines.
@@ -156,10 +162,6 @@ class FilesystemTools:
 
         Returns:
             The content of the file.
-
-        Raises:
-            ValueError: If both head and tail are specified.
-            PermissionError: If the path is outside allowed directories.
         """
         if head is not None and tail is not None:
             raise ValueError("Cannot specify both head and tail parameters simultaneously")
@@ -167,13 +169,10 @@ class FilesystemTools:
         valid_path = await self._validate_path(path)
         
         def _read():
-            # Open with 'replace' to handle non-utf-8 bytes gracefully for text preview
             with open(valid_path, 'r', encoding='utf-8', errors='replace') as f:
                 if head is not None:
                     return "".join([f.readline() for _ in range(head)])
                 elif tail is not None:
-                    # Reading lines is a simple strategy; for huge files seek approach is better
-                    # but this matches typical agent usage.
                     return "".join(f.readlines()[-tail:])
                 return f.read()
 
@@ -182,8 +181,6 @@ class FilesystemTools:
     async def read_media_file(self, path: str) -> Dict[str, str]:
         """
         Reads an image or audio file and returns it as base64 encoded data.
-        
-        Automatically detects MIME type based on extension or content.
 
         Args:
             path: The path to the media file.
@@ -213,19 +210,15 @@ class FilesystemTools:
     async def read_multiple_files(self, paths: List[str]) -> str:
         """
         Reads the contents of multiple files simultaneously.
-        
-        Efficiently handles multiple reads in parallel. Errors in reading individual files
-        are reported in the output string rather than raising an exception for the whole batch.
 
         Args:
             paths: List of file paths to read.
 
         Returns:
-            A concatenated string of file contents or error messages, separated by dashes.
+            A concatenated string of file contents or error messages.
         """
         async def _read_safe(p):
             try:
-                # Reuse read_text_file logic internally
                 content = await self.read_text_file(p)
                 return f"{p}:\n{content}\n"
             except Exception as e:
@@ -237,34 +230,27 @@ class FilesystemTools:
     async def write_file(self, path: str, content: str) -> str:
         """
         Writes content to a file using an atomic write strategy.
-        
-        This method creates a new file or overwrites an existing one. It uses a temporary file
-        and an atomic rename operation to prevent race conditions (TOCTOU) and ensure
-        integrity.
 
         Args:
             path: File location.
             content: File content.
 
         Returns:
-            Success message indicating the file was written.
+            Success message.
         """
         valid_path = await self._validate_path(path)
         
         def _write():
             valid_path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                # Try exclusive creation first
                 with open(valid_path, 'x', encoding='utf-8') as f:
                     f.write(content)
             except FileExistsError:
-                # If file exists, use atomic replacement strategy
-                # 1. Write to temp file in same directory
+                # Atomic replacement
                 with tempfile.NamedTemporaryFile(mode='w', dir=valid_path.parent, delete=False, encoding='utf-8', suffix='.tmp') as tmp:
                     tmp.write(content)
                     tmp_path = Path(tmp.name)
                 try:
-                    # 2. Atomically replace target
                     os.replace(tmp_path, valid_path)
                 except OSError as e:
                     try: os.unlink(tmp_path)
@@ -277,26 +263,19 @@ class FilesystemTools:
     async def edit_file(
         self, 
         path: str, 
-        edits: List[Dict[str, str]], 
+        edits: List[EditOperation], 
         dry_run: bool = False
     ) -> str:
         """
         Applies line-based edits to a text file using strict search and replace.
-        
-        Attempts to match 'oldText' exactly. If exact match fails, it tries a line-by-line
-        comparison ignoring leading/trailing whitespace. If a match is found, it replaces
-        the lines while attempting to preserve indentation.
 
         Args:
             path: File to edit.
-            edits: List of edit operations. Each dict must have 'oldText' and 'newText'.
+            edits: List of EditOperation objects.
             dry_run: Preview changes using git-style diff format without applying.
 
         Returns:
             A git-style unified diff string showing the changes.
-
-        Raises:
-            ValueError: If the text to replace cannot be found in the file.
         """
         valid_path = await self._validate_path(path)
         
@@ -304,78 +283,62 @@ class FilesystemTools:
             with open(valid_path, 'r', encoding='utf-8') as f:
                 original = f.read()
             
-            # Normalize line endings to \n for internal processing
             content_str = original.replace('\r\n', '\n')
             modified_content = content_str
             
-            for edit in edits:
-                # Normalize edits to match file content
-                old_text = edit.get('oldText', '').replace('\r\n', '\n')
-                new_text = edit.get('newText', '').replace('\r\n', '\n')
+            for edit_item in edits:
+                # Handle both Pydantic object or Dict (if passed raw)
+                if isinstance(edit_item, dict):
+                    edit = EditOperation(**edit_item)
+                else:
+                    edit = edit_item
+
+                old_text = edit.oldText.replace('\r\n', '\n')
+                new_text = edit.newText.replace('\r\n', '\n')
                 
-                # 1. Try Exact Match
+                # 1. Exact Match
                 if old_text in modified_content:
                     modified_content = modified_content.replace(old_text, new_text, 1)
                     continue
                     
-                # 2. Try Flexible Line-by-Line Match (Whitespace insensitive)
+                # 2. Flexible Match
                 old_lines = old_text.splitlines()
                 content_lines = modified_content.splitlines()
                 match_found = False
                 
-                # Scan through content lines
                 for i in range(len(content_lines) - len(old_lines) + 1):
                     potential_match = content_lines[i : i + len(old_lines)]
-                    
-                    # Check if all lines match when trimmed
                     is_match = True
                     for j, p_line in enumerate(potential_match):
-                        # Using strip() to ignore whitespace differences
                         if p_line.strip() != old_lines[j].strip():
-                            is_match = False
-                            break
+                            is_match = False; break
                     
                     if is_match:
-                        # Match found! Construct new lines preserving indentation
-                        
-                        # Determine original indentation from the first matched line
                         original_indent = ""
                         first_line = content_lines[i]
                         if len(first_line) > len(first_line.lstrip()):
                              original_indent = first_line[:len(first_line) - len(first_line.lstrip())]
 
                         new_replacement_lines = []
-                        new_text_lines = new_text.splitlines()
-                        
-                        for j, line in enumerate(new_text_lines):
-                            if j == 0:
-                                 # Apply indentation of the first matched line to the first new line
-                                 new_replacement_lines.append(original_indent + line.lstrip())
-                            else:
-                                 # For subsequent lines, maintain relative structure from newText
-                                 new_replacement_lines.append(line)
+                        for j, line in enumerate(new_text.splitlines()):
+                            if j == 0: new_replacement_lines.append(original_indent + line.lstrip())
+                            else: new_replacement_lines.append(line)
 
-                        # Replace the lines in the list
                         content_lines[i : i + len(old_lines)] = new_replacement_lines
                         modified_content = "\n".join(content_lines)
                         match_found = True
                         break
                 
                 if not match_found:
-                    # For logging purposes, show the first few chars
-                    snippet = old_text[:50] + "..." if len(old_text) > 50 else old_text
-                    raise ValueError(f"Could not find exact match for edit: {snippet}")
+                    raise ValueError(f"Could not find exact match for edit: {edit.oldText[:50]}...")
             
-            # Generate unified diff
             diff = "".join(difflib.unified_diff(
                 original.splitlines(keepends=True), 
                 modified_content.splitlines(keepends=True), 
-                fromfile=path, tofile=path,
-                lineterm=''
+                fromfile=path, tofile=path, lineterm=''
             ))
             
             if not dry_run:
-                # Atomic write for edits
                 with tempfile.NamedTemporaryFile(mode='w', dir=valid_path.parent, delete=False, encoding='utf-8', suffix='.tmp') as tmp:
                     tmp.write(modified_content)
                     tmp_path = Path(tmp.name)
@@ -390,31 +353,13 @@ class FilesystemTools:
         return await asyncio.to_thread(_apply)
 
     async def create_directory(self, path: str) -> str:
-        """
-        Creates a new directory or ensures it exists.
-        
-        Args:
-            path: Directory path.
-
-        Returns:
-            Success message.
-        """
+        """Creates a new directory or ensures it exists."""
         valid_path = await self._validate_path(path)
         await asyncio.to_thread(os.makedirs, valid_path, exist_ok=True)
         return f"Successfully created directory {path}"
 
     async def list_directory(self, path: str) -> str:
-        """
-        Lists files and directories in the specified path.
-        
-        Output format distinguishes between directories and files (e.g., [DIR], [FILE]).
-
-        Args:
-            path: Directory path.
-
-        Returns:
-            Formatted list of directory contents.
-        """
+        """Lists files and directories in the specified path."""
         valid_path = await self._validate_path(path)
         def _list():
             if not valid_path.is_dir(): raise NotADirectoryError(f"{path} is not a directory")
@@ -425,18 +370,9 @@ class FilesystemTools:
     async def list_directory_with_sizes(
         self, 
         path: str, 
-        sort_by: Literal["name", "size"] = "name"
+        sort_by: SortBy = SortBy.NAME
     ) -> str:
-        """
-        Lists files and directories with their sizes.
-        
-        Args:
-            path: Directory path to list.
-            sort_by: Sort entries by 'name' or 'size'.
-
-        Returns:
-            Formatted list including size information and summary.
-        """
+        """Lists files and directories with their sizes."""
         valid_path = await self._validate_path(path)
         def _list():
             entries = []
@@ -449,7 +385,12 @@ class FilesystemTools:
                         entries.append({"name": entry.name, "is_dir": entry.is_dir(), "size": s})
                     except: pass
             
-            entries.sort(key=lambda x: x["size"] if sort_by == "size" else x["name"], reverse=(sort_by=="size"))
+            # Handle Enum or raw string if passed directly
+            sort_key = sort_by.value if isinstance(sort_by, SortBy) else sort_by
+            is_sort_size = sort_key == "size"
+            
+            entries.sort(key=lambda x: x["size"] if is_sort_size else x["name"], reverse=is_sort_size)
+            
             lines = [f"{'[DIR] ' if e['is_dir'] else '[FILE]'} {e['name']:<30} {self._format_size(e['size']) if not e['is_dir'] else ''}" for e in entries]
             lines.append(f"Total size: {self._format_size(total_size)}")
             return "\n".join(lines)
@@ -460,18 +401,7 @@ class FilesystemTools:
         path: str, 
         exclude_patterns: Optional[List[str]] = None
     ) -> str:
-        """
-        Generates a recursive JSON structure representing the directory tree.
-        
-        Respects exclude patterns to filter out unwanted files or directories.
-
-        Args:
-            path: Starting directory.
-            exclude_patterns: List of glob patterns to exclude.
-
-        Returns:
-            JSON string representing the directory tree.
-        """
+        """Generates a recursive JSON structure representing the directory tree."""
         root = await self._validate_path(path)
         excludes = exclude_patterns or []
         
@@ -484,8 +414,6 @@ class FilesystemTools:
             for entry in entries:
                 try: rel_path = os.path.relpath(entry.path, current_root)
                 except: rel_path = entry.name
-                
-                # Check exclude patterns against name and relative path
                 if any(fnmatch.fnmatch(entry.name, p) or fnmatch.fnmatch(rel_path, p) for p in excludes):
                     continue
                 
@@ -499,18 +427,7 @@ class FilesystemTools:
         return json.dumps(tree_data, indent=2)
 
     async def move_file(self, source: str, destination: str) -> str:
-        """
-        Moves or renames a file or directory.
-        
-        Both source and destination must be within allowed directories.
-
-        Args:
-            source: Source path.
-            destination: Destination path.
-
-        Returns:
-            Success message.
-        """
+        """Moves or renames a file or directory."""
         src = await self._validate_path(source)
         dst = await self._validate_path(destination)
         await asyncio.to_thread(shutil.move, src, dst)
@@ -522,29 +439,17 @@ class FilesystemTools:
         pattern: str, 
         exclude_patterns: Optional[List[str]] = None
     ) -> str:
-        """
-        Recursively searches for files matching a glob pattern.
-        
-        Args:
-            path: Starting directory.
-            pattern: Glob search pattern.
-            exclude_patterns: Glob patterns to exclude.
-
-        Returns:
-            List of matching file paths, or a message if no matches found.
-        """
+        """Recursively searches for files matching a glob pattern."""
         root = await self._validate_path(path)
         excludes = exclude_patterns or []
         
         def _search():
             results = []
             for dirpath, dirnames, filenames in os.walk(root):
-                # Exclude directories in place to prevent traversal
                 for dirname in list(dirnames):
                     rel = os.path.relpath(os.path.join(dirpath, dirname), root)
                     if any(fnmatch.fnmatch(dirname, p) or fnmatch.fnmatch(rel, p) for p in excludes):
                         dirnames.remove(dirname)
-                
                 for filename in filenames:
                     full = os.path.join(dirpath, filename)
                     rel = os.path.relpath(full, root)
@@ -557,15 +462,7 @@ class FilesystemTools:
         return await asyncio.to_thread(_search)
 
     async def get_file_info(self, path: str) -> str:
-        """
-        Retrieves detailed metadata for a file or directory.
-
-        Args:
-            path: The path to inspect.
-
-        Returns:
-            Formatted string with size, dates, and permissions.
-        """
+        """Retrieves detailed metadata for a file or directory."""
         valid_path = await self._validate_path(path)
         def _info():
             s = valid_path.stat()
@@ -573,12 +470,7 @@ class FilesystemTools:
         return await asyncio.to_thread(_info)
 
     async def list_allowed_directories(self) -> str:
-        """
-        Returns the list of directories the agent is allowed to access.
-
-        Returns:
-            Newline-separated list of allowed paths.
-        """
+        """Returns the list of directories the agent is allowed to access."""
         return "\n".join(self.allowed_directories)
 
     # --- 3. Helper to generate OpenAI Strict JSON Schema ---
@@ -593,6 +485,10 @@ class FilesystemTools:
         - 'additionalProperties' must be False.
         """
         
+        # Use Pydantic to generate schema for the complex inner object
+        edit_op_schema = EditOperation.model_json_schema()
+        if "title" in edit_op_schema: del edit_op_schema["title"]
+
         tools = [
             {
                 "type": "function",
@@ -677,15 +573,7 @@ class FilesystemTools:
                             "path": {"type": "string", "description": "File to edit"},
                             "edits": {
                                 "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "oldText": {"type": "string", "description": "Text to search for"},
-                                        "newText": {"type": "string", "description": "Text to replace with"}
-                                    },
-                                    "required": ["oldText", "newText"],
-                                    "additionalProperties": False
-                                },
+                                "items": edit_op_schema, # Use the Pydantic-generated strict schema here
                                 "description": "List of edit operations"
                             },
                             "dry_run": {"type": "boolean", "description": "Preview changes only"}
@@ -737,7 +625,11 @@ class FilesystemTools:
                         "type": "object",
                         "properties": {
                             "path": {"type": "string", "description": "Directory path to list"},
-                            "sort_by": {"type": "string", "enum": ["name", "size"], "description": "Sort entries by name or size"}
+                            "sort_by": {
+                                "type": "string", 
+                                "enum": [e.value for e in SortBy], # Use values from Enum
+                                "description": "Sort entries by name or size"
+                            }
                         },
                         "required": ["path", "sort_by"],
                         "additionalProperties": False
