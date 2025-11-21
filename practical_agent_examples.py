@@ -265,20 +265,27 @@ class DocumentationAgent:
     프로젝트 문서를 자동으로 생성하는 에이전트.
     """
     
+    # Maximum number of files to include in documentation
+    MAX_FILES_IN_DOC = 5
+    
     def __init__(self, allowed_dirs: List[str]):
         self.fs_tools = FilesystemTools(allowed_dirs)
     
-    async def generate_api_doc(self, source_dir: str, output_file: str) -> Dict[str, Any]:
+    async def generate_api_doc(self, source_dir: str, output_file: str, max_files: int = None) -> Dict[str, Any]:
         """
         소스 디렉토리의 Python 파일들을 분석하여 API 문서를 생성합니다.
         
         Args:
             source_dir: 소스 코드 디렉토리
             output_file: 출력 문서 파일 경로
+            max_files: 문서에 포함할 최대 파일 수 (기본값: MAX_FILES_IN_DOC)
             
         Returns:
             생성 결과
         """
+        if max_files is None:
+            max_files = self.MAX_FILES_IN_DOC
+            
         print(f"📝 Generating API documentation from: {source_dir}")
         
         # Search for Python files
@@ -293,7 +300,7 @@ class DocumentationAgent:
         doc_content += "This documentation was automatically generated.\n\n"
         doc_content += "## Files\n\n"
         
-        for file_info in py_files_list[:5]:  # Limit to first 5 files for demo
+        for file_info in py_files_list[:max_files]:  # Use configurable limit
             try:
                 # Extract filename from the list entry
                 if '[FILE]' in file_info:

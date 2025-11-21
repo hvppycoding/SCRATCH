@@ -150,25 +150,26 @@ class OpenAIAgentWithTools:
         try:
             if tool_name == "read_file":
                 result = await self.fs_tools.read_text_file(arguments["path"])
-                return json.dumps(result)
+                # Return the content directly for text files
+                return result if isinstance(result, str) else json.dumps(result)
             
             elif tool_name == "write_file":
                 result = await self.fs_tools.write_file(
                     arguments["path"], 
                     arguments["content"]
                 )
-                return json.dumps(result)
+                return result if isinstance(result, str) else json.dumps(result)
             
             elif tool_name == "list_directory":
                 result = await self.fs_tools.list_directory(arguments["path"])
-                return json.dumps(result)
+                return result if isinstance(result, str) else json.dumps(result)
             
             elif tool_name == "search_files":
                 result = await self.fs_tools.search_files(
                     arguments["path"],
                     arguments["pattern"]
                 )
-                return json.dumps(result)
+                return result if isinstance(result, str) else json.dumps(result)
             
             else:
                 return json.dumps({"error": f"Unknown tool: {tool_name}"})
@@ -208,8 +209,28 @@ class OpenAIAgentWithTools:
             
             message = response.choices[0].message
             
+            # Convert message to dict for conversation history
+            message_dict = {
+                "role": message.role,
+                "content": message.content
+            }
+            
+            # Add tool calls if present
+            if message.tool_calls:
+                message_dict["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": tc.type,
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments
+                        }
+                    }
+                    for tc in message.tool_calls
+                ]
+            
             # Add assistant's response to history
-            self.conversation_history.append(message)
+            self.conversation_history.append(message_dict)
             
             # Check if the agent wants to use tools
             if message.tool_calls:
