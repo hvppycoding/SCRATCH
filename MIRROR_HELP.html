@@ -1,0 +1,59 @@
+<script>
+(function () {
+  var host = window.location.hostname;
+
+  // 미러에서만 노출 (hostname 기준)
+  if (!host.includes("confluence-mirror")) return;
+
+  // Office망 URL 생성: confluence-mirror -> confluence
+  var officeHost = host.replace("confluence-mirror", "confluence");
+  var officeUrl =
+    window.location.protocol + "//" +
+    officeHost +
+    window.location.pathname +
+    window.location.search +
+    window.location.hash;
+
+  // 배너(안내문 + inline code)
+  var banner = document.createElement("div");
+  banner.id = "mirror-office-notice";
+  banner.style.margin = "12px 0";
+  banner.style.padding = "10px 12px";
+  banner.style.background = "#FFF3CD";
+  banner.style.border = "1px solid #E0C97F";
+  banner.style.borderRadius = "6px";
+  banner.style.fontSize = "14px";
+  banner.style.lineHeight = "1.4";
+  banner.style.color = "#333";
+
+  var code = document.createElement("code");
+  code.textContent = officeUrl;
+  code.style.padding = "2px 6px";
+  code.style.background = "rgba(0,0,0,0.06)";
+  code.style.borderRadius = "4px";
+
+  banner.appendChild(document.createTextNode("자료가 잘 보이지 않을 경우 Office망의 사이트 주소를 이용하세요: "));
+  banner.appendChild(code);
+
+  // article 상단에 삽입 (없으면 대표 컨테이너로 fallback)
+  function inject() {
+    if (document.getElementById("mirror-office-notice")) return;
+
+    var selectors = ["article", "#main-content", "#content", ".wiki-content", "[data-testid='page-content']"];
+    var container = null;
+    for (var i = 0; i < selectors.length; i++) {
+      container = document.querySelector(selectors[i]);
+      if (container) break;
+    }
+    if (!container) container = document.body;
+
+    container.insertBefore(banner, container.firstChild);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", inject);
+  } else {
+    inject();
+  }
+})();
+</script>
