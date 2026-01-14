@@ -1,0 +1,99 @@
+<style>
+    /* 1. 플로팅 컨테이너 디자인 */
+    .toc-float {
+        position: fixed;
+        top: 100px;
+        right: 20px;
+        width: 280px;
+        max-height: 85vh;
+        overflow-y: auto;
+        
+        /* 디자인: 흰색 박스에 그림자 */
+        background-color: #ffffff;
+        padding: 15px;
+        border: 1px solid #dfe1e6;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(9, 30, 66, 0.15);
+        z-index: 1000;
+        
+        /* 초기에는 숨김 (JS로 TOC를 찾으면 보여줌) */
+        display: none; 
+    }
+
+    /* 플로팅 박스 제목 */
+    .toc-float-title {
+        font-size: 14px;
+        font-weight: bold;
+        color: #5e6c84;
+        border-bottom: 2px solid #ebecf0;
+        margin-bottom: 10px;
+        padding-bottom: 5px;
+        display: block;
+    }
+
+    /* 2. Confluence 기본 TOC 스타일 재정의 (박스 안에 들어갔을 때) */
+    .toc-float .toc-macro {
+        font-size: 13px !important;
+    }
+    
+    .toc-float .toc-macro ul {
+        padding-left: 20px !important;
+    }
+    
+    .toc-float .toc-macro a {
+        text-decoration: none;
+        color: #172b4d;
+        transition: color 0.2s;
+    }
+    
+    .toc-float .toc-macro a:hover {
+        color: #0052cc;
+        text-decoration: underline;
+    }
+
+    /* 화면이 좁을 때(1250px 이하) 숨김 처리 */
+    @media (max-width: 1250px) {
+        .toc-float { display: none !important; }
+    }
+</style>
+
+<div class="toc-float" id="toc-float-container">
+    <span class="toc-float-title">Contents</span>
+    </div>
+
+<script>
+    AJS.toInit(function() {
+        var sidebarWidth = 320; // 본문 밀어낼 간격
+        var tocContainer = document.getElementById('toc-float-container');
+        
+        // 1. 페이지 내의 Confluence 기본 TOC 찾기 (.toc-macro 클래스 사용)
+        // 주의: 테마나 버전에 따라 클래스명이 다를 수 있어 여러 후보를 찾습니다.
+        var originalToc = document.querySelector('.toc-macro') || 
+                          document.querySelector('.client-side-toc-macro') ||
+                          document.querySelector('[data-macro-name="toc"]');
+
+        var contentBody = document.querySelector('.wiki-content') || document.querySelector('#main-content');
+
+        // 2. TOC가 발견되면 플로팅 박스로 이동시킴
+        if (originalToc && tocContainer) {
+            tocContainer.appendChild(originalToc); // 위치 이동 (DOM Move)
+            tocContainer.style.display = 'block';  // 박스 보이게 설정
+
+            // 본문 영역 레이아웃 조정 함수
+            function adjustLayout() {
+                if (window.innerWidth > 1250) {
+                    contentBody.style.paddingRight = sidebarWidth + 'px';
+                    contentBody.style.boxSizing = 'border-box';
+                    tocContainer.style.display = 'block';
+                } else {
+                    contentBody.style.paddingRight = '0px';
+                    tocContainer.style.display = 'none';
+                }
+            }
+
+            // 초기 실행 및 리사이즈 이벤트
+            adjustLayout();
+            window.addEventListener('resize', adjustLayout);
+        }
+    });
+</script>
