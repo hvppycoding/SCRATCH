@@ -1,16 +1,24 @@
 import tkinter as tk
 from PIL import ImageGrab
 from datetime import datetime
-import win32clipboard # 클립보드 제어 모듈
+import subprocess  # 리눅스 명령어 실행용
 from io import BytesIO
+import os
 
 class ScreenCaptureTool:
     def __init__(self):
         self.root = tk.Tk()
-        # 반투명 배경 및 전체화면 설정
-        self.root.attributes('-alpha', 0.3)
+        
+        # 리눅스(MATE) 호환 전체화면 설정
         self.root.attributes('-fullscreen', True)
         self.root.attributes('-topmost', True)
+        
+        # 투명도 설정 (컴포지터가 켜져 있어야 작동함. 안 되면 검은 화면이 뜰 수 있음)
+        try:
+            self.root.attributes('-alpha', 0.3)
+        except tk.TclError:
+            print("경고: 투명도 설정 실패 (컴포지터 미지원 가능성)")
+
         self.root.config(bg="black", cursor="cross")
 
         self.start_x = None
@@ -38,7 +46,7 @@ class ScreenCaptureTool:
 
     def on_button_release(self, event):
         end_x, end_y = (event.x, event.y)
-        self.root.withdraw() # 캡쳐 순간 창 숨기기
+        self.root.withdraw()
 
         x1 = min(self.start_x, end_x)
         y1 = min(self.start_y, end_y)
@@ -51,30 +59,44 @@ class ScreenCaptureTool:
         self.root.destroy()
 
     def process_image(self, x1, y1, x2, y2):
-        # 1. 이미지 캡쳐
-        img = ImageGrab.grab(bbox=(x1, y1, x2, y2))
-        
-        # 2. 파일로 저장 (초경량 WebP)
+        # 1. 캡쳐 (Linux X11 환경에서는 xdisplay 매개변수가 필요할 수 있으나 보통 자동 감지됨)
+        try:
+            img = ImageGrab.grab(bbox=(x1, y1, x2, y2))
+        except Exception as e:
+            print(f"캡쳐 실패 (X11 설정 확인 필요): {e}")
+            return
+
+        # 2. WebP 파일 저장
         filename = datetime.now().strftime("crop_%Y%m%d_%H%M%S.webp")
         img.save(filename, 'WEBP', quality=50, method=6)
         print(f"파일 저장 완료: {filename}")
 
-        # 3. 클립보드로 전송
-        self.send_to_clipboard(img)
-        print("클립보드 복사 완료! (Ctrl+V 가능)")
+        # 3. 리눅스 클립보드 전송 (xclip 사용)
+        self.send_to_clipboard_linux(img)
 
-    def send_to_clipboard(self, image):
-        # 이미지를 윈도우 클립보드 포맷(DIB)으로 변환
+    def send_to_clipboard_linux(self, image):
+        # 이미지를 메모리 버퍼에 PNG로 저장 (xclip은 PNG를 선호함)
         output = BytesIO()
-        image.convert("RGB").save(output, "BMP")
-        data = output.getvalue()[14:] # BMP 헤더 14바이트를 제거해야 DIB 포맷이 됨
+        image.save(output, format='PNG')
+        data = output.getvalue()
         output.close()
 
-        # 클립보드 열기 및 데이터 넣기
-        win32clipboard.OpenClipboard()
-        win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
-        win32clipboard.CloseClipboard()
+        try:
+            # xclip 프로세스를 실행하여 클립보드에 데이터 밀어넣기
+            # -selection clipboard: Ctrl+V용 클립보드 지정
+            # -t image/png: MIME 타입 지정
+            p = subprocess.Popen(
+                ['xclip', '-selection', 'clipboard', '-t', 'image/png', '-i'], 
+                stdin=subprocess.PIPE
+            )
+            p.communicate(input=data)
+            print("클립보드 복사 완료! (xclip)")
+        except FileNotFoundError:
+            print("오류: 'xclip' 명령어를 찾을 수 없습니다. 'sudo dnf install xclip'을 실행해주세요.")
 
 if __name__ == "__main__":
+    # Display 환경변수가 없는 경우 대비 (SSH 터미널 실행 등)
+    if not os.environ.get('DISPLAY'):
+        os.environ['DISPLAY'] = ':0'
+        
     app = ScreenCaptureTool()
