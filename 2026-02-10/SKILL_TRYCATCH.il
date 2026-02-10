@@ -1,45 +1,31 @@
 defmacro( CaptureAll (@rest body)
-    `(let( (outP warnP errP result outS warnS errS)
+    `(let( ((outP outstring()) (warnP outstring()) (errP outstring()) result)
         
-        ; 1. Create string ports for all 3 channels
-        outP = outstring()
-        warnP = outstring()
-        errP = outstring()
-
         unwindProtect(
             ;-----------------------------------------------------------
-            ; main clause - redirect output, warning, and error ports
+            ; [Main Block] 실행 및 캡처
             ;-----------------------------------------------------------
             {
                 let( ((poport outP) (woport warnP) (errport errP))
                     
-                    ; Execute body safely using errset to catch errors
+                    ; 1. 코드 실행
                     result = errset( progn( ,@body ) t )
 
-                    ; Force final warning to be flushed (as requested)
-                    warn("")
-                    
-                    ; Note: If 'getWarn()' is a custom function in your env, 
-                    ; it would be called here. Standard SKILL uses getOutstring below.
+                    ; 2. 요청하신 강제 플러싱 및 getWarn 호출
+                    warn("")   
+                    getWarn()  ; 여기서 호출하면 warnP의 내용이 한번 비워집니다.
                 )
-                
-                ;-------------------------------------------------------
-                ; Capture data from ports into strings
-                ;-------------------------------------------------------
-                outS = getOutstring(outP)
-                warnS = getOutstring(warnP)
-                errS = getOutstring(errP)
-                
-                ; Return all captured data and the execution result
-                list( outS warnS errS result )
+
+                ; 3. 결과 리턴 (getWarn으로 비워진 후 새로 쌓인 게 있다면 가져옴)
+                list( getOutstring(outP) getOutstring(warnP) getOutstring(errP) result )
             }
-            
+
             ;-----------------------------------------------------------
-            ; cleanup clause - always close ports to prevent memory leaks
+            ; [Cleanup Block] 포트 정리 (에러가 나도 무조건 실행)
             ;-----------------------------------------------------------
             {
-                close(outP)
-                close(warnP)
+                close(outP) 
+                close(warnP) 
                 close(errP)
             }
         )
