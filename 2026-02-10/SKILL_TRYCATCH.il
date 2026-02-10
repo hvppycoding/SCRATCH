@@ -1,53 +1,63 @@
 /*******************************************************************************
-* 함수명: CaptureAll
-* 사용법: CaptureAll( '( 코드... ) )
-* 리턴값: list( "Output" "Warning" "Error" 결과 )
+* Function: CaptureAll
+* Description: Executes code and captures Stdout, Warnings, and Errors separately.
+* Input: Quoted code list (e.g., '( printf(...) ) )
+* Returns: list( "OutputString" "WarningString" "ErrorString" ExecutionResult )
 *******************************************************************************/
 procedure( CaptureAll( codeList )
     let( (outP warnP errP res outS warnS errS)
         
-        ; 1. 메모리 포트 생성 (함수명 수정: makeStringOutputStream -> outstring)
+        ; 1. Create string output ports (in-memory streams)
         outP = outstring()
         warnP = outstring()
         errP = outstring()
         
-        ; 2. 3대 포트 가로채기 (poport, woport, errport)
+        ; 2. Redirect standard system ports to our variable ports
+        ; poport = Standard Output, woport = Warning Output, errport = Error Output
         let( ((poport outP) (woport warnP) (errport errP))
-            ; 코드 실행 (에러 발생 시에도 멈추지 않음)
+            
+            ; 3. Execute code safely
+            ; 't' ensures error messages are sent to our captured 'errport'
             res = errset( eval(codeList) t )
         )
         
-        ; 3. 포트에 담긴 문자열 꺼내기
+        ; 4. Extract strings from ports
         outS = getOutstring(outP)
         warnS = getOutstring(warnP)
         errS = getOutstring(errP)
         
-        ; 4. 포트 닫기
+        ; 5. Close ports to free memory
         close(outP)
         close(warnP)
         close(errP)
         
-        ; 5. 결과 리턴
+        ; 6. Return the list
         list( outS warnS errS res )
     )
 )
 
 
 
-; --- 테스트 코드 ---
+; --- Test Scenario ---
 resultList = CaptureAll( '(
     progn(
-        printf("1. 일반 출력 메시지입니다.\n")
-        warn("2. 이것은 경고(Warning) 메시지입니다.")
-        printf("3. 에러 발생 직전...\n")
-        x = 10 / 0  ; 에러 발생!
-        printf("4. 이 줄은 실행되지 않습니다.\n")
+        printf("1. Normal output message.\n")
+        
+        warn("2. This is a warning message!")
+        
+        printf("3. About to divide by zero...\n")
+        
+        ; This causes an error
+        result = 10 / 0 
+        
+        printf("4. This line will NOT be executed.\n")
     )
 ) )
 
-; --- 결과 확인 ---
-printf("==================================\n")
-printf("[Output]  : %s\n" nth(0 resultList))
-printf("[Warning] : %s\n" nth(1 resultList))
-printf("[Error]   : %s\n" nth(2 resultList))
-printf("==================================\n")
+; --- Check Results ---
+printf("\n=== CAPTURED LOGS ===\n")
+printf("[OUTPUT] : \n%s\n" nth(0 resultList))
+printf("[WARNING]: \n%s\n" nth(1 resultList))
+printf("[ERROR]  : \n%s\n" nth(2 resultList))
+printf("=====================\n")
+
