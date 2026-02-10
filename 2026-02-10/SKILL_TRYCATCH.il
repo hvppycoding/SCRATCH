@@ -1,36 +1,51 @@
-/*******************************************************************************
-* Macro: CaptureAll
-* Style: S-Expression (Lisp-style) to prevent parser errors.
-* Usage: CaptureAll( code... )
-* Returns: list( OutputString WarningString ErrorString Result )
-*******************************************************************************/
-(defmacro CaptureAll (@rest body)
-    `(let ( (outP (outstring)) 
-            (warnP (outstring)) 
-            (errP (outstring)) 
-            (res nil)
-            outS warnS errS )
+defmacro( CaptureAll (@rest body)
+    `(let( (outP warnP errP result outS warnS errS)
         
-        ; 1. Redirect standard ports (poport, woport, errport)
-        (let ( (poport outP) (woport warnP) (errport errP) )
+        ; 1. Create string ports for all 3 channels
+        outP = outstring()
+        warnP = outstring()
+        errP = outstring()
+
+        unwindProtect(
+            ;-----------------------------------------------------------
+            ; main clause - redirect output, warning, and error ports
+            ;-----------------------------------------------------------
+            {
+                let( ((poport outP) (woport warnP) (errport errP))
+                    
+                    ; Execute body safely using errset to catch errors
+                    result = errset( progn( ,@body ) t )
+
+                    ; Force final warning to be flushed (as requested)
+                    warn("")
+                    
+                    ; Note: If 'getWarn()' is a custom function in your env, 
+                    ; it would be called here. Standard SKILL uses getOutstring below.
+                )
+                
+                ;-------------------------------------------------------
+                ; Capture data from ports into strings
+                ;-------------------------------------------------------
+                outS = getOutstring(outP)
+                warnS = getOutstring(warnP)
+                errS = getOutstring(errP)
+                
+                ; Return all captured data and the execution result
+                list( outS warnS errS result )
+            }
             
-            ; 2. Execute code safely
-            ;    (progn ,@body) groups multiple lines into one block
-            (setq res (errset (progn ,@body) t))
+            ;-----------------------------------------------------------
+            ; cleanup clause - always close ports to prevent memory leaks
+            ;-----------------------------------------------------------
+            {
+                close(outP)
+                close(warnP)
+                close(errP)
+            }
         )
-        
-        ; 3. Extract strings from ports
-        (setq outS (getOutstring outP))
-        (setq warnS (getOutstring warnP))
-        (setq errS (getOutstring errP))
-        
-        ; 4. Cleanup (Close ports)
-        (close outP) (close warnP) (close errP)
-        
-        ; 5. Return the list
-        (list outS warnS errS res)
     )
 )
+
 
 
 
