@@ -1,63 +1,39 @@
-/*******************************************************************************
-* Function: CaptureAll
-* Description: Executes code and captures Stdout, Warnings, and Errors separately.
-* Input: Quoted code list (e.g., '( printf(...) ) )
-* Returns: list( "OutputString" "WarningString" "ErrorString" ExecutionResult )
-*******************************************************************************/
-procedure( CaptureAll( codeList )
-    let( (outP warnP errP res outS warnS errS)
+(defmacro CaptureAll (@rest body)
+    `(let ( (outP (outstring)) 
+            (warnP (outstring)) 
+            (errP (outstring)) 
+            (res nil)
+            outS warnS errS )
         
-        ; 1. Create string output ports (in-memory streams)
-        outP = outstring()
-        warnP = outstring()
-        errP = outstring()
-        
-        ; 2. Redirect standard system ports to our variable ports
-        ; poport = Standard Output, woport = Warning Output, errport = Error Output
-        let( ((poport outP) (woport warnP) (errport errP))
+        ; 1. 포트 가로채기 (let 바인딩 괄호 주의)
+        (let ( (poport outP) (woport warnP) (errport errP) )
             
-            ; 3. Execute code safely
-            ; 't' ensures error messages are sent to our captured 'errport'
-            res = errset( eval(codeList) t )
+            ; 2. 코드 실행 (Comma-at ,@ 사용)
+            (setq res (errset (progn ,@body) t))
         )
         
-        ; 4. Extract strings from ports
-        outS = getOutstring(outP)
-        warnS = getOutstring(warnP)
-        errS = getOutstring(errP)
+        ; 3. 결과 추출
+        (setq outS (getOutstring outP))
+        (setq warnS (getOutstring warnP))
+        (setq errS (getOutstring errP))
         
-        ; 5. Close ports to free memory
-        close(outP)
-        close(warnP)
-        close(errP)
+        ; 4. 정리
+        (close outP) (close warnP) (close errP)
         
-        ; 6. Return the list
-        list( outS warnS errS res )
+        ; 5. 리턴
+        (list outS warnS errS res)
     )
 )
 
 
+; [테스트]
+result = CaptureAll(
+    printf("1. 아웃풋 테스트\n")
+    warn("2. 워닝 테스트")
+    x = 10 / 0  ; 3. 에러 테스트
+)
 
-; --- Test Scenario ---
-resultList = CaptureAll( '(
-    progn(
-        printf("1. Normal output message.\n")
-        
-        warn("2. This is a warning message!")
-        
-        printf("3. About to divide by zero...\n")
-        
-        ; This causes an error
-        result = 10 / 0 
-        
-        printf("4. This line will NOT be executed.\n")
-    )
-) )
-
-; --- Check Results ---
-printf("\n=== CAPTURED LOGS ===\n")
-printf("[OUTPUT] : \n%s\n" nth(0 resultList))
-printf("[WARNING]: \n%s\n" nth(1 resultList))
-printf("[ERROR]  : \n%s\n" nth(2 resultList))
-printf("=====================\n")
-
+; [결과 확인]
+printf("OUT : %s\n" nth(0 result))
+printf("WARN: %s\n" nth(1 result))
+printf("ERR : %s\n" nth(2 result))
