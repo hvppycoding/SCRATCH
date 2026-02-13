@@ -1,0 +1,20 @@
+# Core dependencies for agent functionality
+pydantic>=2.0.0
+
+# OpenAI agent examples
+openai>=1.0.0
+
+# AutoGen agent examples (optional)
+# autogen-agentchat
+# autogen-ext
+
+# Visualization and data analysis (optional, used in examples)
+# pandas
+# matplotlib
+# seaborn
+
+# Browser automation (optional)
+# PySide2
+
+# Other dependencies used in existing examples
+# requests
